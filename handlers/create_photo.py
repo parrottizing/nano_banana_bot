@@ -46,7 +46,7 @@ async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await context.bot.send_message(
         chat_id=chat_id, 
-        text=f"🎨 Генерирую изображение...\nМодель: {MODEL_NAME}"
+        text=f"🎨 Генерирую изображение..."
     )
     
     try:
@@ -83,7 +83,7 @@ async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not has_content:
             await context.bot.send_message(
                 chat_id=chat_id, 
-                text="❌ Не удалось сгенерировать изображение. Попробуйте другой запрос."
+                text="❌ Не удалось сгенерировать изображение."
             )
         
     except Exception as e:
