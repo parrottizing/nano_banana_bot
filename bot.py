@@ -7,7 +7,7 @@ import google.generativeai as genai
 
 # Import handlers
 from handlers import create_photo_handler, handle_photo_prompt
-from handlers import analyze_ctr_handler, handle_ctr_data
+from handlers import analyze_ctr_handler, handle_ctr_photo, handle_ctr_text
 
 load_dotenv()
 
@@ -72,15 +72,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route text messages to appropriate handlers based on user state"""
     
-    # Try photo handler first
+    # Try photo prompt handler first
     if await handle_photo_prompt(update, context):
         return
     
-    # Try CTR handler
-    if await handle_ctr_data(update, context):
+    # Try CTR text handler (reminds user to send image)
+    if await handle_ctr_text(update, context):
         return
     
     # Default: show menu hint
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="👆 Используйте /start для открытия меню."
+    )
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Route photo messages to appropriate handlers based on user state"""
+    
+    # Try CTR photo handler
+    if await handle_ctr_photo(update, context):
+        return
+    
+    # Default: show menu hint for unhandled photos
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="👆 Используйте /start для открытия меню."
@@ -96,10 +110,12 @@ if __name__ == '__main__':
     start_handler = CommandHandler('start', start)
     callback_handler = CallbackQueryHandler(button_callback)
     message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
+    photo_handler = MessageHandler(filters.PHOTO, handle_photo)
     
     application.add_handler(start_handler)
     application.add_handler(callback_handler)
     application.add_handler(message_handler)
+    application.add_handler(photo_handler)
     
     print("Bot is running...")
     application.run_polling()
