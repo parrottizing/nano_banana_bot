@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 import google.generativeai as genai
 
 # Import handlers
-from handlers import create_photo_handler, handle_photo_prompt
+from handlers import create_photo_handler, handle_photo_prompt, handle_create_photo_image
 from handlers import analyze_ctr_handler, handle_ctr_photo, handle_ctr_text
 
 load_dotenv()
@@ -89,6 +89,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route photo messages to appropriate handlers based on user state"""
+    
+    # Try create_photo handler first
+    if await handle_create_photo_image(update, context):
+        return
     
     # Try CTR photo handler
     if await handle_ctr_photo(update, context):
