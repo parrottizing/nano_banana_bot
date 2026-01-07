@@ -204,7 +204,7 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                         chat_id=chat_id,
                         document=io.BytesIO(image_data),
                         filename="generated_image.png",
-                        caption="📥 Полная версия в оригинальном качестве"
+                        caption="📥 Изображение в оригинальном качестве"
                     )
                     has_content = True
 
