@@ -50,11 +50,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=welcome_text,
-        reply_markup=reply_markup
-    )
+    # Send banner image with welcome message and menu
+    banner_path = os.path.join(os.path.dirname(__file__), "assets", "menu_banner.png")
+    with open(banner_path, "rb") as banner_file:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=banner_file,
+            caption=welcome_text,
+            reply_markup=reply_markup
+        )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route button callbacks to appropriate handlers"""
