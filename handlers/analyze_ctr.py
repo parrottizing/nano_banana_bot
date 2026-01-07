@@ -8,8 +8,25 @@ from telegram import Update
 from telegram.ext import ContextTypes
 import google.generativeai as genai
 from PIL import Image
+from telegram.error import BadRequest
 
 MODEL_NAME = "gemini-3-flash-preview"
+
+
+async def safe_send_message(bot, chat_id: int, text: str, parse_mode: str = "Markdown"):
+    """
+    Safely send a message with fallback to plain text if Markdown parsing fails.
+    This handles cases where AI-generated content has malformed Markdown entities.
+    """
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+    except BadRequest as e:
+        if "Can't parse entities" in str(e):
+            # Fallback to plain text if Markdown parsing fails
+            logging.warning(f"[AnalyzeCTR] Markdown parsing failed, sending as plain text: {e}")
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode=None)
+        else:
+            raise
 
 # Store user states for conversation flow
 user_states = {}
@@ -20,29 +37,38 @@ CTR_ANALYSIS_PROMPT = """Ты эксперт по маркетплейсам (Wi
 
 Дай детальный анализ по следующим критериям:
 
-📊 **ОБЩАЯ ОЦЕНКА CTR**: X/10
+📊 ОБЩАЯ ОЦЕНКА CTR: X/10
 
-🎯 **ЧТО РАБОТАЕТ ХОРОШО:**
-- [перечисли сильные стороны карточки]
+🎯 ЧТО РАБОТАЕТ ХОРОШО:
+• [перечисли сильные стороны карточки]
 
-⚠️ **ЧТО НУЖНО УЛУЧШИТЬ:**
-- [перечисли слабые места]
+⚠️ ЧТО НУЖНО УЛУЧШИТЬ:
+• [перечисли слабые места]
 
-💡 **КОНКРЕТНЫЕ РЕКОМЕНДАЦИИ:**
+💡 КОНКРЕТНЫЕ РЕКОМЕНДАЦИИ:
 1. [рекомендация 1]
 2. [рекомендация 2]
 3. [рекомендация 3]
 
 Оценивай:
-- Читаемость и размер заголовка/названия товара
-- Видимость и презентация самого товара
-- Цветовая гамма и контраст
-- Наличие УТП (скидки, бесплатная доставка, и т.д.)
-- Качество изображения
-- Соответствие трендам маркетплейсов
-- Информативность (цена, цвета, размеры)
+• Читаемость и размер заголовка/названия товара
+• Видимость и презентация самого товара
+• Цветовая гамма и контраст
+• Наличие УТП (скидки, бесплатная доставка, и т.д.)
+• Качество изображения
+• Соответствие трендам маркетплейсов
+• Информативность (цена, цвета, размеры)
 
-Будь конкретным и практичным в рекомендациях."""
+Будь конкретным и практичным в рекомендациях.
+
+ВАЖНО - Правила форматирования для Telegram:
+• Используй *одинарные звёздочки* для жирного текста
+• Используй _нижние подчёркивания_ для курсива  
+• НЕ используй ** (двойные звёздочки)
+• НЕ используй # для заголовков
+• НЕ используй --- для разделителей
+• НЕ используй - для списков, используй • или числа
+• Эмодзи можно использовать свободно"""
 
 
 async def analyze_ctr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,17 +137,9 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 # Split into chunks
                 for i in range(0, len(result_text), 4096):
                     chunk = result_text[i:i+4096]
-                    await context.bot.send_message(
-                        chat_id=chat_id, 
-                        text=chunk,
-                        parse_mode="Markdown"
-                    )
+                    await safe_send_message(context.bot, chat_id, chunk, parse_mode="Markdown")
             else:
-                await context.bot.send_message(
-                    chat_id=chat_id, 
-                    text=result_text,
-                    parse_mode="Markdown"
-                )
+                await safe_send_message(context.bot, chat_id, result_text, parse_mode="Markdown")
         else:
             await context.bot.send_message(
                 chat_id=chat_id, 
