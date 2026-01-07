@@ -4,10 +4,10 @@ Handles the "Создать фото" menu option with support for text and imag
 """
 import logging
 import io
+from PIL import Image
 from telegram import Update
 from telegram.ext import ContextTypes
 import google.generativeai as genai
-from google.genai import types
 
 MODEL_NAME = "gemini-3-pro-image-preview"
 MAX_IMAGES = 5
@@ -29,10 +29,8 @@ async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await query.message.reply_text(
         "🎨 *Создание фото*\n\n"
-        "📝 *Вариант 1:* Отправьте текстовое описание\n"
-        "Например: _'Красивый закат над горами с отражением в озере'_\n\n"
-        "🖼 *Вариант 2:* Отправьте до 5 изображений с текстом в подписи\n"
-        "Например: добавьте фото кота с подписью _'добавь шляпу этому коту'_",
+        "Отправьте описание изображения, которое хотите создать или отредактировать.\n"
+        "Например: _'Красивый закат над горами с отражением в озере'_",
         parse_mode="Markdown"
     )
 
@@ -87,13 +85,11 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
         file = await photo.get_file()
         image_bytes = await file.download_as_bytearray()
         
-        # Store image data
-        image_part = types.Part.from_bytes(
-            data=bytes(image_bytes),
-            mime_type='image/jpeg'
-        )
+        # Open with PIL to ensure proper format
+        image = Image.open(io.BytesIO(image_bytes))
         
-        current_images.append(image_part)
+        # Store PIL Image object (compatible with google.generativeai)
+        current_images.append(image)
         user_states[user_id]["images"] = current_images
         
         logging.info(f"[CreatePhoto] User {user_id} added image {len(current_images)}/{MAX_IMAGES}")
@@ -145,7 +141,7 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         update: Telegram update
         context: Telegram context
         prompt: Text prompt from user
-        images: List of image Parts (can be empty)
+        images: List of PIL Image objects (can be empty)
     """
     chat_id = update.effective_chat.id
     
@@ -169,17 +165,17 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         model = genai.GenerativeModel(MODEL_NAME)
         logging.info(f"[CreatePhoto] Generating with prompt: {prompt}, images: {len(images)}")
         
-        # Build the content parts for multimodal input
-        content_parts = []
-        
-        # Add images first (if any)
-        content_parts.extend(images)
-        
-        # Add text prompt
-        content_parts.append(prompt)
+        # Build the content for multimodal input
+        # For google.generativeai, we pass images and text directly in a list
+        if images:
+            # Multi-modal: images + text
+            content = images + [prompt]
+        else:
+            # Text-only
+            content = prompt
         
         # Generate content
-        response = await model.generate_content_async(content_parts)
+        response = await model.generate_content_async(content)
         
         has_content = False
 
