@@ -191,11 +191,20 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                         caption_text += f"📸 Исходных изображений: {len(images)}\n"
                     caption_text += f"Промпт: _{prompt}_"
                     
+                    # Send as photo for quick preview (Telegram will compress)
                     await context.bot.send_photo(
                         chat_id=chat_id, 
                         photo=io.BytesIO(image_data),
                         caption=caption_text,
                         parse_mode="Markdown"
+                    )
+                    
+                    # Send as document for full quality
+                    await context.bot.send_document(
+                        chat_id=chat_id,
+                        document=io.BytesIO(image_data),
+                        filename="generated_image.png",
+                        caption="📥 Полная версия в оригинальном качестве"
                     )
                     has_content = True
 
