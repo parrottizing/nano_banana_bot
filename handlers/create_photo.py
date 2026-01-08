@@ -265,8 +265,21 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             # Text-only
             content = enhanced_prompt
         
+        # Configure generation parameters
+        # Use 3:4 vertical aspect ratio for CTR improvement requests
+        gen_config = {}
+        if intent['wants_ctr_improvement']:
+            gen_config['aspect_ratio'] = "3:4"
+            logging.info("[CreatePhoto] Using 3:4 aspect ratio for CTR optimization")
+        
         # Generate content
-        response = await model.generate_content_async(content)
+        if gen_config:
+            response = await model.generate_content_async(
+                content,
+                generation_config=genai.GenerationConfig(**gen_config)
+            )
+        else:
+            response = await model.generate_content_async(content)
         
         has_content = False
 
