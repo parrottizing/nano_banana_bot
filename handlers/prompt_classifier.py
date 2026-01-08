@@ -5,7 +5,7 @@ Uses lightweight multimodal model for quick classification tasks before main pro
 import logging
 import google.generativeai as genai
 
-CLASSIFIER_MODEL = "gemma-3-12b"
+CLASSIFIER_MODEL = "gemma-3-12b-it"
 CLASSIFICATION_TEMPERATURE = 0  # Zero temperature for consistent yes/no answers
 
 
