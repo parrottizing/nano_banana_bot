@@ -244,14 +244,24 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         
         # Build enhanced prompt based on classification
         enhanced_prompt = prompt
+        enhancements_applied = []
         
         if intent['wants_ctr_improvement']:
             enhanced_prompt += CTR_ENHANCEMENT_PROMPT
+            enhancements_applied.append("CTR optimization")
             logging.info("[CreatePhoto] Added CTR optimization enhancement")
         
         if intent['is_screenshot']:
             enhanced_prompt += SCREENSHOT_ENHANCEMENT_PROMPT
+            enhancements_applied.append("screenshot processing")
             logging.info("[CreatePhoto] Added screenshot processing enhancement")
+        
+        # Log the full enhanced prompt when enhancements are applied
+        if enhancements_applied:
+            logging.info(f"[CreatePhoto] Enhancements applied: {', '.join(enhancements_applied)}")
+            logging.info(f"[CreatePhoto] === FULL ENHANCED PROMPT START ===")
+            logging.info(f"{enhanced_prompt}")
+            logging.info(f"[CreatePhoto] === FULL ENHANCED PROMPT END ===")
         
         model = genai.GenerativeModel(MODEL_NAME)
         logging.info(f"[CreatePhoto] Generating with prompt: {prompt}, images: {len(images)}")
