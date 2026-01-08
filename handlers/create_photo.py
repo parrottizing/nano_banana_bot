@@ -8,10 +8,35 @@ from PIL import Image
 from telegram import Update
 from telegram.ext import ContextTypes
 import google.generativeai as genai
+from .prompt_classifier import analyze_user_intent
 
 MODEL_NAME = "gemini-3-pro-image-preview"
 MAX_IMAGES = 5
 MAX_IMAGE_SIZE_MB = 7
+
+# CTR optimization prompt enhancement
+CTR_ENHANCEMENT_PROMPT = """
+ВАЖНО: Пользователь хочет улучшить CTR (кликабельность) этого изображения для маркетплейса.
+
+При создании/редактировании изображения учти:
+• Увеличь контраст и яркость товара
+• Сделай заголовок/текст более заметным и читаемым
+• Добавь визуальные элементы привлечения внимания (если уместно)
+• Улучши композицию для лучшей презентации товара
+• Оптимизируй цветовую гамму для максимальной привлекательности
+• Убедись, что товар хорошо выделяется на фоне
+"""
+
+# Screenshot-specific prompt enhancement  
+SCREENSHOT_ENHANCEMENT_PROMPT = """
+ВАЖНО: Это скриншот страницы маркетплейса.
+
+При обработке:
+• Извлеки чистое изображение товара, убрав элементы интерфейса
+• Удали навигацию, кнопки, логотипы маркетплейса
+• Создай профессиональную карточку товара без UI элементов
+• Сохрани только сам товар и важную информацию о нем
+"""
 
 # Store user states for conversation flow
 user_states = {}
@@ -28,8 +53,8 @@ async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     }
     
     await query.message.reply_text(
-        "🎨 *Создание фото*\n\n"
-        "Отправьте описание изображения, которое хотите создать или отредактировать.\n"
+        "🎨 *Создание фото*\\n\\n"
+        "Отправьте описание изображения, которое хотите создать или отредактировать.\\n"
         "Например: _'Красивый закат над горами с отражением в озере'_",
         parse_mode="Markdown"
     )
@@ -50,7 +75,7 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
     if not caption:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="⚠️ Пожалуйста, отправьте изображение с текстовым описанием в подписи.\n\n"
+            text="⚠️ Пожалуйста, отправьте изображение с текстовым описанием в подписи.\\n\\n"
                  "Например: добавьте подпись _'добавь шляпу этому коту'_ к вашему фото.",
             parse_mode="Markdown"
         )
@@ -162,17 +187,34 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
     )
     
     try:
+        # Analyze user intent using Gemma 3 12B classifier
+        intent = await analyze_user_intent(prompt, images)
+        
+        logging.info(f"[CreatePhoto] Intent analysis: CTR={intent['wants_ctr_improvement']}, "
+                    f"Screenshot={intent['is_screenshot']}")
+        
+        # Build enhanced prompt based on classification
+        enhanced_prompt = prompt
+        
+        if intent['wants_ctr_improvement']:
+            enhanced_prompt += CTR_ENHANCEMENT_PROMPT
+            logging.info("[CreatePhoto] Added CTR optimization enhancement")
+        
+        if intent['is_screenshot']:
+            enhanced_prompt += SCREENSHOT_ENHANCEMENT_PROMPT
+            logging.info("[CreatePhoto] Added screenshot processing enhancement")
+        
         model = genai.GenerativeModel(MODEL_NAME)
         logging.info(f"[CreatePhoto] Generating with prompt: {prompt}, images: {len(images)}")
         
         # Build the content for multimodal input
         # For google.generativeai, we pass images and text directly in a list
         if images:
-            # Multi-modal: images + text
-            content = images + [prompt]
+            # Multi-modal: images + enhanced text
+            content = images + [enhanced_prompt]
         else:
             # Text-only
-            content = prompt
+            content = enhanced_prompt
         
         # Generate content
         response = await model.generate_content_async(content)
