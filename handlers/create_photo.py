@@ -4,6 +4,7 @@ Handles the "Создать фото" menu option with support for text and imag
 """
 import logging
 import io
+import asyncio
 from PIL import Image
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -13,6 +14,62 @@ from .prompt_classifier import analyze_user_intent
 MODEL_NAME = "gemini-3-pro-image-preview"
 MAX_IMAGES = 5
 MAX_IMAGE_SIZE_MB = 7
+
+# Animation configuration
+PHOTO_LOADING_EMOJIS = ["🤔", "💡", "🎨"]
+ANIMATION_STEP_DELAY = 2.9  # Seconds between emoji changes
+
+async def run_loading_animation(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """
+    Runs a cycling loading animation that sends, edits, and deletes messages.
+    Expected to be cancelled when processing is complete.
+    """
+    try:
+        while True:
+            # Step 1: Send initial message
+            msg = await context.bot.send_message(
+                chat_id=chat_id, 
+                text=PHOTO_LOADING_EMOJIS[0]
+            )
+            
+            # Step 2: Cycle through rest of emojis
+            for emoji in PHOTO_LOADING_EMOJIS[1:]:
+                await asyncio.sleep(ANIMATION_STEP_DELAY)
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=msg.message_id,
+                        text=emoji
+                    )
+                except Exception:
+                    # Ignore edit errors (e.g. if message was deleted)
+                    pass
+            
+            # Step 3: Wait a bit before deleting (cycle complete)
+            await asyncio.sleep(ANIMATION_STEP_DELAY)
+            
+            # Step 4: Delete message
+            try:
+                await context.bot.delete_message(
+                    chat_id=chat_id,
+                    message_id=msg.message_id
+                )
+            except Exception:
+                pass
+                
+            # Loop continues immediately to send next message
+            
+    except asyncio.CancelledError:
+        # Cleanup when cancelled: try to delete the last message
+        try:
+            if 'msg' in locals():
+                await context.bot.delete_message(
+                    chat_id=chat_id, 
+                    message_id=msg.message_id
+                )
+        except Exception:
+            pass
+        raise
 
 # CTR optimization prompt enhancement (based on marketplace best practices 2025)
 CTR_ENHANCEMENT_PROMPT = """
@@ -222,21 +279,8 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
     """
     chat_id = update.effective_chat.id
     
-    # Send processing message
-    processing_msg = "🎨 Генерирую изображение..."
-    if images:
-        img_count = len(images)
-        if img_count == 1:
-            processing_msg = "🎨 Обрабатываю изображение..."
-        elif img_count < 5:
-            processing_msg = f"🎨 Обрабатываю {img_count} изображения..."
-        else:
-            processing_msg = f"🎨 Обрабатываю {img_count} изображений..."
-    
-    await context.bot.send_message(
-        chat_id=chat_id, 
-        text=processing_msg
-    )
+    # Start animation task
+    animation_task = asyncio.create_task(run_loading_animation(context, chat_id))
     
     try:
         # Analyze user intent using Gemma 3 12B classifier
@@ -294,6 +338,13 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         else:
             response = await model.generate_content_async(content)
         
+        # Stop animation before sending results
+        animation_task.cancel()
+        try:
+            await animation_task
+        except asyncio.CancelledError:
+            pass
+
         has_content = False
 
         # Check for image parts
@@ -340,5 +391,13 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             )
         
     except Exception as e:
+        # Ensure animation is stopped on error
+        if not animation_task.done():
+            animation_task.cancel()
+            try:
+                await animation_task
+            except asyncio.CancelledError:
+                pass
+                
         logging.error(f"[CreatePhoto] Error: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка: {e}")

@@ -4,6 +4,7 @@ Analyzes product card images to provide recommendations for improving CTR.
 """
 import logging
 import io
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 import google.generativeai as genai
@@ -11,6 +12,62 @@ from PIL import Image
 from telegram.error import BadRequest
 
 MODEL_NAME = "gemini-3-flash-preview"
+
+# Animation configuration
+CTR_LOADING_EMOJIS = ["🔍", "✍️", "📝"]
+ANIMATION_STEP_DELAY = 2.9  # Seconds between emoji changes
+
+async def run_loading_animation(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """
+    Runs a cycling loading animation that sends, edits, and deletes messages.
+    Expected to be cancelled when processing is complete.
+    """
+    try:
+        while True:
+            # Step 1: Send initial message
+            msg = await context.bot.send_message(
+                chat_id=chat_id, 
+                text=CTR_LOADING_EMOJIS[0]
+            )
+            
+            # Step 2: Cycle through rest of emojis
+            for emoji in CTR_LOADING_EMOJIS[1:]:
+                await asyncio.sleep(ANIMATION_STEP_DELAY)
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=msg.message_id,
+                        text=emoji
+                    )
+                except Exception:
+                    # Ignore edit errors (e.g. if message was deleted)
+                    pass
+            
+            # Step 3: Wait a bit before deleting (cycle complete)
+            await asyncio.sleep(ANIMATION_STEP_DELAY)
+            
+            # Step 4: Delete message
+            try:
+                await context.bot.delete_message(
+                    chat_id=chat_id,
+                    message_id=msg.message_id
+                )
+            except Exception:
+                pass
+                
+            # Loop continues immediately to send next message
+            
+    except asyncio.CancelledError:
+        # Cleanup when cancelled: try to delete the last message
+        try:
+            if 'msg' in locals():
+                await context.bot.delete_message(
+                    chat_id=chat_id, 
+                    message_id=msg.message_id
+                )
+        except Exception:
+            pass
+        raise
 
 
 async def safe_send_message(bot, chat_id: int, text: str, parse_mode: str = "Markdown"):
@@ -109,10 +166,8 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Get the photo (largest size available)
     photo = update.message.photo[-1]
     
-    await context.bot.send_message(
-        chat_id=chat_id, 
-        text="📊 Анализирую карточку товара..."
-    )
+    # Start animation task
+    animation_task = asyncio.create_task(run_loading_animation(context, chat_id))
     
     try:
         # Download the photo
@@ -128,6 +183,13 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         
         # Send image + prompt to Gemini
         response = await model.generate_content_async([CTR_ANALYSIS_PROMPT, image])
+        
+        # Stop animation before sending results
+        animation_task.cancel()
+        try:
+            await animation_task
+        except asyncio.CancelledError:
+            pass
         
         if response.text:
             # Split long messages if needed (Telegram limit is 4096 chars)
@@ -147,6 +209,14 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
         
     except Exception as e:
+        # Ensure animation is stopped on error
+        if not animation_task.done():
+            animation_task.cancel()
+            try:
+                await animation_task
+            except asyncio.CancelledError:
+                pass
+                
         logging.error(f"[AnalyzeCTR] Error: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка: {e}")
     
