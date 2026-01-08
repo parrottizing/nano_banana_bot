@@ -77,8 +77,8 @@ async def analyze_ctr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_states[user_id] = "awaiting_ctr_image"
     
     message_text = (
-        "📊 *Анализ CTR карточки товара*\\n\\n"
-        "📸 Отправьте фото карточки товара или скриншот с маркетплейса.\\n\\n"
+        "📊 *Анализ CTR карточки товара*\n\n"
+        "📸 Отправьте фото карточки товара или скриншот с маркетплейса.\n\n"
     )
     
     # Check if this is a callback query (inline button) or a command
