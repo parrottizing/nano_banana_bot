@@ -72,18 +72,23 @@ CTR_ANALYSIS_PROMPT = """Ты эксперт по маркетплейсам (Wi
 
 
 async def analyze_ctr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Called when user clicks 'Анализ CTR' button"""
-    query = update.callback_query
-    await query.answer()
-    
+    """Called when user clicks 'Анализ CTR' button or uses /analyze_ctr command"""
     user_id = update.effective_user.id
     user_states[user_id] = "awaiting_ctr_image"
     
-    await query.message.reply_text(
-        "📊 *Анализ CTR карточки товара*\n\n"
-        "📸 Отправьте фото карточки товара или скриншот с маркетплейса.\n\n",
-        parse_mode="Markdown"
+    message_text = (
+        "📊 *Анализ CTR карточки товара*\\n\\n"
+        "📸 Отправьте фото карточки товара или скриншот с маркетплейса.\\n\\n"
     )
+    
+    # Check if this is a callback query (inline button) or a command
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.reply_text(message_text, parse_mode="Markdown")
+    else:
+        # This is a direct command (from menu or typed)
+        await update.message.reply_text(message_text, parse_mode="Markdown")
 
 
 async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:

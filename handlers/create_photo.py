@@ -92,21 +92,26 @@ SCREENSHOT_ENHANCEMENT_PROMPT = """
 user_states = {}
 
 async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Called when user clicks 'Создать фото' button"""
-    query = update.callback_query
-    await query.answer()
-    
+    """Called when user clicks 'Создать фото' button or uses /create_photo command"""
     user_id = update.effective_user.id
     user_states[user_id] = {
         "mode": "awaiting_photo_input",
         "images": []
     }
     
-    await query.message.reply_text(
+    message_text = (
         "🎨 *Создание фото*\n\n"
-        "Отправьте описание изображения, которое хотите создать или отредактировать.",
-        parse_mode="Markdown"
+        "Отправьте описание изображения, которое хотите создать или отредактировать."
     )
+    
+    # Check if this is a callback query (inline button) or a command
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.reply_text(message_text, parse_mode="Markdown")
+    else:
+        # This is a direct command (from menu or typed)
+        await update.message.reply_text(message_text, parse_mode="Markdown")
 
 async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
