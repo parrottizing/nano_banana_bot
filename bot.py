@@ -1,7 +1,7 @@
 import os
 import logging
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 import google.generativeai as genai
 
@@ -27,6 +27,15 @@ else:
     logging.warning("GOOGLE_API_KEY not found in environment variables.")
 
 MODEL_NAME = "gemini-3-pro-image-preview"
+
+async def setup_bot_commands(application):
+    """Set up bot menu button commands"""
+    commands = [
+        BotCommand("start", "🏠 Главное меню"),
+        BotCommand("create_photo", "🎨 Создать фото"),
+        BotCommand("analyze_ctr", "📊 Анализ CTR"),
+    ]
+    await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command - show main menu"""
@@ -111,15 +120,26 @@ if __name__ == '__main__':
         
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
+    
     start_handler = CommandHandler('start', start)
+    create_photo_cmd_handler = CommandHandler('create_photo', lambda update, context: create_photo_handler(update, context))
+    analyze_ctr_cmd_handler = CommandHandler('analyze_ctr', lambda update, context: analyze_ctr_handler(update, context))
     callback_handler = CallbackQueryHandler(button_callback)
     message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     photo_handler = MessageHandler(filters.PHOTO, handle_photo)
     
     application.add_handler(start_handler)
+    application.add_handler(create_photo_cmd_handler)
+    application.add_handler(analyze_ctr_cmd_handler)
     application.add_handler(callback_handler)
     application.add_handler(message_handler)
     application.add_handler(photo_handler)
+    
+    # Set up bot menu commands after initialization
+    async def post_init(app):
+        await setup_bot_commands(app)
+    
+    application.post_init = post_init
     
     print("Bot is running...")
     application.run_polling()
