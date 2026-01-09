@@ -43,7 +43,10 @@ async def setup_bot_commands(application):
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /support command - redirect to support contact"""
     support_url = f"https://t.me/{SUPPORT_USERNAME}"
-    keyboard = [[InlineKeyboardButton("💬 Написать в поддержку", url=support_url)]]
+    keyboard = [
+        [InlineKeyboardButton("💬 Написать в поддержку", url=support_url)],
+        [InlineKeyboardButton("🏠 В главное меню", callback_data="main_menu")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await context.bot.send_message(
@@ -77,7 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📊 Анализ CTR", callback_data="analyze_ctr"),
         ],
         [
-            InlineKeyboardButton("🆘 Поддержка", url=f"https://t.me/{SUPPORT_USERNAME}"),
+            InlineKeyboardButton("🆘 Поддержка", callback_data="support"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -100,6 +103,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await create_photo_handler(update, context)
     elif query.data == "analyze_ctr":
         await analyze_ctr_handler(update, context)
+    elif query.data == "support":
+        await query.answer()
+        await support(update, context)
+    elif query.data == "main_menu":
+        await query.answer()
+        await start(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route text messages to appropriate handlers based on user state"""
