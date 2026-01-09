@@ -230,7 +230,7 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             # Deduct balance and log successful analysis
             new_balance = deduct_balance(user_id, "analyze_ctr")
             log_conversation(
-                user_id, "analyze_ctr", "bot_response", result_text[:500],  # Truncate for storage
+                user_id, "analyze_ctr", "bot_response", result_text,
                 tokens_used=TOKEN_COSTS["analyze_ctr"],
                 success=True
             )
