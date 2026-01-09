@@ -52,6 +52,7 @@ class TestBotCommands:
         context.bot = MagicMock()
         context.bot.send_message = AsyncMock()
         context.bot.send_photo = AsyncMock()
+        context.user_data = {}  # Add user_data for database-based state
         return context
     
     @pytest.mark.asyncio
@@ -265,10 +266,14 @@ class TestBotStateManagement:
     
     @pytest.mark.asyncio
     async def test_user_state_isolation(self):
-        """Test that different users have isolated states"""
-        print("\n🧪 Testing user state isolation...")
+        """Test that different users have isolated states in database"""
+        print("\n🧪 Testing user state isolation (database-based)...")
         
-        from handlers.create_photo import user_states
+        from database import get_user_state, clear_user_state
+        
+        # Clear any existing states
+        clear_user_state(111)
+        clear_user_state(222)
         
         # Simulate two different users
         user1_update = MagicMock(spec=Update)
@@ -286,20 +291,31 @@ class TestBotStateManagement:
         user2_update.callback_query = None
         
         context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+        context.user_data = {}
         
         # User 1 enters photo creation mode
         await create_photo_handler(user1_update, context)
-        assert 111 in user_states
-        assert user_states[111]["mode"] == "awaiting_photo_input"
+        state1 = get_user_state(111)
+        assert state1 is not None
+        assert state1["feature"] == "create_photo"
+        assert state1["state"] == "awaiting_photo_input"
         
         # User 2 enters photo creation mode
         await create_photo_handler(user2_update, context)
-        assert 222 in user_states
-        assert user_states[222]["mode"] == "awaiting_photo_input"
+        state2 = get_user_state(222)
+        assert state2 is not None
+        assert state2["feature"] == "create_photo"
+        assert state2["state"] == "awaiting_photo_input"
         
-        # Both users should have independent states
-        assert user_states[111]["mode"] == "awaiting_photo_input"
-        assert user_states[222]["mode"] == "awaiting_photo_input"
+        # Both users should still have their independent states
+        state1_check = get_user_state(111)
+        state2_check = get_user_state(222)
+        assert state1_check["state"] == "awaiting_photo_input"
+        assert state2_check["state"] == "awaiting_photo_input"
+        
+        # Cleanup
+        clear_user_state(111)
+        clear_user_state(222)
         
         print("✅ User state isolation works correctly!")
 

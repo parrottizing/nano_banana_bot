@@ -10,6 +10,11 @@ from telegram.ext import ContextTypes
 import google.generativeai as genai
 from PIL import Image
 from telegram.error import BadRequest
+from database import (
+    get_user_state, set_user_state, clear_user_state,
+    log_conversation, check_balance, deduct_balance,
+    TOKEN_COSTS
+)
 
 MODEL_NAME = "gemini-3-flash-preview"
 
@@ -85,8 +90,7 @@ async def safe_send_message(bot, chat_id: int, text: str, parse_mode: str = "Mar
         else:
             raise
 
-# Store user states for conversation flow
-user_states = {}
+
 
 CTR_ANALYSIS_PROMPT = """Ты эксперт по маркетплейсам (Wildberries, Ozon, Яндекс.Маркет) и визуальному дизайну карточек товаров.
 
@@ -131,7 +135,12 @@ CTR_ANALYSIS_PROMPT = """Ты эксперт по маркетплейсам (Wi
 async def analyze_ctr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Called when user clicks 'Анализ CTR' button or uses /analyze_ctr command"""
     user_id = update.effective_user.id
-    user_states[user_id] = "awaiting_ctr_image"
+    
+    # Set user state in database
+    set_user_state(user_id, "analyze_ctr", "awaiting_ctr_image", {})
+    
+    # Log the button click
+    log_conversation(user_id, "analyze_ctr", "button_click", "analyze_ctr")
     
     message_text = (
         "📊 *Анализ CTR карточки товара*\n\n"
@@ -155,13 +164,28 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """
     user_id = update.effective_user.id
     
-    if user_states.get(user_id) != "awaiting_ctr_image":
+    # Check if user is in CTR analysis mode (using database)
+    state = get_user_state(user_id)
+    if not state or state.get("feature") != "analyze_ctr" or state.get("state") != "awaiting_ctr_image":
         return False
     
     chat_id = update.effective_chat.id
     
+    # Check balance before processing
+    if not check_balance(user_id, TOKEN_COSTS["analyze_ctr"]):
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Недостаточно токенов! Требуется: {TOKEN_COSTS['analyze_ctr']}\n"
+                 "Пополните баланс для продолжения."
+        )
+        clear_user_state(user_id)
+        return True
+    
     # Clear the state
-    user_states.pop(user_id, None)
+    clear_user_state(user_id)
+    
+    # Log the user's image submission
+    log_conversation(user_id, "analyze_ctr", "user_image", "CTR analysis request", image_count=1)
     
     # Get the photo (largest size available)
     photo = update.message.photo[-1]
@@ -179,7 +203,7 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         
         model = genai.GenerativeModel(MODEL_NAME)
         
-        logging.info(f"[AnalyzeCTR] Analyzing product card image")
+        logging.info(f"[AnalyzeCTR] Analyzing product card image for user {user_id}")
         
         # Send image + prompt to Gemini
         response = await model.generate_content_async([CTR_ANALYSIS_PROMPT, image])
@@ -202,11 +226,21 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     await safe_send_message(context.bot, chat_id, chunk, parse_mode="Markdown")
             else:
                 await safe_send_message(context.bot, chat_id, result_text, parse_mode="Markdown")
+            
+            # Deduct balance and log successful analysis
+            new_balance = deduct_balance(user_id, "analyze_ctr")
+            log_conversation(
+                user_id, "analyze_ctr", "bot_response", result_text[:500],  # Truncate for storage
+                tokens_used=TOKEN_COSTS["analyze_ctr"],
+                success=True
+            )
+            logging.info(f"[AnalyzeCTR] Deducted {TOKEN_COSTS['analyze_ctr']} tokens from user {user_id}, new balance: {new_balance}")
         else:
             await context.bot.send_message(
                 chat_id=chat_id, 
                 text="❌ Не удалось проанализировать изображение. Попробуйте другое фото."
             )
+            log_conversation(user_id, "analyze_ctr", "error", "Empty response from model", success=False)
         
     except Exception as e:
         # Ensure animation is stopped on error
@@ -219,6 +253,7 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 
         logging.error(f"[AnalyzeCTR] Error: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка: {e}")
+        log_conversation(user_id, "analyze_ctr", "error", str(e), success=False)
     
     return True
 
@@ -230,7 +265,9 @@ async def handle_ctr_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """
     user_id = update.effective_user.id
     
-    if user_states.get(user_id) != "awaiting_ctr_image":
+    # Check if user is in CTR analysis mode (using database)
+    state = get_user_state(user_id)
+    if not state or state.get("feature") != "analyze_ctr" or state.get("state") != "awaiting_ctr_image":
         return False
     
     await context.bot.send_message(

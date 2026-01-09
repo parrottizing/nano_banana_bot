@@ -9,6 +9,9 @@ import google.generativeai as genai
 from handlers import create_photo_handler, handle_photo_prompt, handle_create_photo_image
 from handlers import analyze_ctr_handler, handle_ctr_photo, handle_ctr_text
 
+# Import database
+from database import init_db, get_or_create_user, log_conversation
+
 load_dotenv()
 
 # Configure logging
@@ -64,11 +67,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command - show main menu"""
     user = update.effective_user
     
-    # Create welcome message
+    # Get or create user in database
+    db_user = get_or_create_user(user.id, user.username, user.first_name)
+    
+    # Log the start command
+    log_conversation(user.id, "start", "command", "/start")
+    
+    # Create welcome message with real balance
     welcome_text = (
         f"👤 Имя: {user.first_name}"
         + (f" (@{user.username})" if user.username else "") + "\n"
-        f"💰 Баланс: 50 токенов\n"
+        f"💰 Баланс: {db_user['balance']} токенов\n"
         f"⚡ Модель: {MODEL_NAME}\n\n"
         f"👇 Выберите раздел в меню ниже."
     )
@@ -171,6 +180,8 @@ if __name__ == '__main__':
     
     # Set up bot menu commands after initialization
     async def post_init(app):
+        # Initialize database
+        init_db()
         await setup_bot_commands(app)
     
     application.post_init = post_init

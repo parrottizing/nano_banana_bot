@@ -10,6 +10,11 @@ from telegram import Update
 from telegram.ext import ContextTypes
 import google.generativeai as genai
 from .prompt_classifier import analyze_user_intent
+from database import (
+    get_user_state, set_user_state, clear_user_state,
+    log_conversation, check_balance, deduct_balance,
+    TOKEN_COSTS
+)
 
 MODEL_NAME = "gemini-3-pro-image-preview"
 MAX_IMAGES = 5
@@ -143,16 +148,17 @@ SCREENSHOT_ENHANCEMENT_PROMPT = """
 ЦЕЛЬ: Преобразовать скриншот в профессиональное изображение товарной карточки, готовое для загрузки на маркетплейс.
 """
 
-# Store user states for conversation flow
-user_states = {}
+
 
 async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Called when user clicks 'Создать фото' button or uses /create_photo command"""
     user_id = update.effective_user.id
-    user_states[user_id] = {
-        "mode": "awaiting_photo_input",
-        "images": []
-    }
+    
+    # Set user state in database
+    set_user_state(user_id, "create_photo", "awaiting_photo_input", {"images": []})
+    
+    # Log the button click
+    log_conversation(user_id, "create_photo", "button_click", "create_photo")
     
     message_text = (
         "🎨 *Создание фото*\n\n"
@@ -175,8 +181,9 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
     """
     user_id = update.effective_user.id
     
-    # Check if user is in photo creation mode
-    if user_id not in user_states or user_states[user_id].get("mode") != "awaiting_photo_input":
+    # Check if user is in photo creation mode (using database)
+    state = get_user_state(user_id)
+    if not state or state.get("feature") != "create_photo" or state.get("state") != "awaiting_photo_input":
         return False
     
     # Check if image has caption
@@ -190,8 +197,19 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
         )
         return True
     
-    # Check image limit
-    current_images = user_states[user_id].get("images", [])
+    # Check balance before processing
+    if not check_balance(user_id, TOKEN_COSTS["create_photo"]):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Недостаточно токенов! Требуется: {TOKEN_COSTS['create_photo']}\n"
+                 "Пополните баланс для продолжения."
+        )
+        clear_user_state(user_id)
+        return True
+    
+    # Get current images from state (note: images are not persisted to DB, only count)
+    # For now we handle images in-memory within one session
+    current_images = context.user_data.get("pending_images", [])
     if len(current_images) >= MAX_IMAGES:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -199,7 +217,8 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
         )
         # Process with current images
         await _process_image_generation(update, context, caption, current_images)
-        user_states.pop(user_id, None)
+        clear_user_state(user_id)
+        context.user_data.pop("pending_images", None)
         return True
     
     try:
@@ -222,15 +241,16 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
         # Open with PIL to ensure proper format
         image = Image.open(io.BytesIO(image_bytes))
         
-        # Store PIL Image object (compatible with google.generativeai)
+        # Store PIL Image object in context.user_data (temporary storage)
         current_images.append(image)
-        user_states[user_id]["images"] = current_images
+        context.user_data["pending_images"] = current_images
         
         logging.info(f"[CreatePhoto] User {user_id} added image {len(current_images)}/{MAX_IMAGES}")
         
         # Process immediately with the caption
         await _process_image_generation(update, context, caption, current_images)
-        user_states.pop(user_id, None)
+        clear_user_state(user_id)
+        context.user_data.pop("pending_images", None)
         
     except Exception as e:
         logging.error(f"[CreatePhoto] Error downloading image: {e}", exc_info=True)
@@ -238,6 +258,7 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
             chat_id=update.effective_chat.id,
             text=f"❌ Ошибка при загрузке изображения: {e}"
         )
+        log_conversation(user_id, "create_photo", "error", str(e), success=False)
     
     return True
 
@@ -248,18 +269,30 @@ async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
     """
     user_id = update.effective_user.id
     
-    # Check if user is in photo creation mode
-    if user_id not in user_states or user_states[user_id].get("mode") != "awaiting_photo_input":
+    # Check if user is in photo creation mode (using database)
+    state = get_user_state(user_id)
+    if not state or state.get("feature") != "create_photo" or state.get("state") != "awaiting_photo_input":
         return False
+    
+    # Check balance before processing
+    if not check_balance(user_id, TOKEN_COSTS["create_photo"]):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Недостаточно токенов! Требуется: {TOKEN_COSTS['create_photo']}\n"
+                 "Пополните баланс для продолжения."
+        )
+        clear_user_state(user_id)
+        return True
     
     user_prompt = update.message.text
     chat_id = update.effective_chat.id
     
-    # Get any images the user might have sent
-    user_images = user_states[user_id].get("images", [])
+    # Get any images the user might have sent (from context.user_data)
+    user_images = context.user_data.get("pending_images", [])
     
     # Clear the state
-    user_states.pop(user_id, None)
+    clear_user_state(user_id)
+    context.user_data.pop("pending_images", None)
     
     # Process with text only or text + images
     await _process_image_generation(update, context, user_prompt, user_images)
@@ -278,6 +311,13 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         images: List of PIL Image objects (can be empty)
     """
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    # Log the user's prompt
+    log_conversation(
+        user_id, "create_photo", "user_prompt", prompt,
+        image_count=len(images)
+    )
     
     # Start animation task
     animation_task = asyncio.create_task(run_loading_animation(context, chat_id))
@@ -375,6 +415,16 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                         caption="📥 Изображение в оригинальном качестве"
                     )
                     has_content = True
+                    
+                    # Deduct balance and log successful generation
+                    new_balance = deduct_balance(user_id, "create_photo")
+                    log_conversation(
+                        user_id, "create_photo", "bot_image_generated", prompt,
+                        image_count=len(images),
+                        tokens_used=TOKEN_COSTS["create_photo"],
+                        success=True
+                    )
+                    logging.info(f"[CreatePhoto] Deducted {TOKEN_COSTS['create_photo']} tokens from user {user_id}, new balance: {new_balance}")
 
         # Check for text response
         try:
@@ -401,3 +451,10 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                 
         logging.error(f"[CreatePhoto] Error: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка: {e}")
+        
+        # Log the error
+        log_conversation(
+            user_id, "create_photo", "error", str(e),
+            image_count=len(images),
+            success=False
+        )
