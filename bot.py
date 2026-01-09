@@ -11,7 +11,7 @@ from handlers import analyze_ctr_handler, handle_ctr_photo, handle_ctr_text
 from handlers import start_ctr_improvement
 
 # Import database
-from database import init_db, get_or_create_user, log_conversation, clear_user_state
+from database import init_db, get_or_create_user, log_conversation, clear_user_state, TOKEN_COSTS
 
 load_dotenv()
 
@@ -87,8 +87,8 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 *Ваш баланс*\n\n"
             f"🎫 У вас *{balance}* токенов\n\n"
             f"📝 Стоимость операций:\n"
-            f"• Создание фото — 1 токен\n"
-            f"• Анализ CTR — 1 токен"
+            f"• Создание фото — {TOKEN_COSTS['create_photo']} токенов\n"
+            f"• Анализ CTR — {TOKEN_COSTS['analyze_ctr']} токенов"
         ),
         reply_markup=reply_markup,
         parse_mode="Markdown"
