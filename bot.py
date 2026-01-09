@@ -40,6 +40,7 @@ async def setup_bot_commands(application):
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("create_photo", "🎨 Создать фото"),
         BotCommand("analyze_ctr", "📊 Анализ CTR"),
+        BotCommand("balance", "💰 Ваш баланс"),
         BotCommand("support", "🆘 Поддержка"),
     ]
     await application.bot.set_my_commands(commands)
@@ -200,6 +201,7 @@ if __name__ == '__main__':
     
     start_handler = CommandHandler('start', start)
     support_cmd_handler = CommandHandler('support', support)
+    balance_cmd_handler = CommandHandler('balance', show_balance)
     create_photo_cmd_handler = CommandHandler('create_photo', lambda update, context: create_photo_handler(update, context))
     analyze_ctr_cmd_handler = CommandHandler('analyze_ctr', lambda update, context: analyze_ctr_handler(update, context))
     callback_handler = CallbackQueryHandler(button_callback)
@@ -208,6 +210,7 @@ if __name__ == '__main__':
     
     application.add_handler(start_handler)
     application.add_handler(support_cmd_handler)
+    application.add_handler(balance_cmd_handler)
     application.add_handler(create_photo_cmd_handler)
     application.add_handler(analyze_ctr_cmd_handler)
     application.add_handler(callback_handler)
