@@ -77,6 +77,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balance = db_user["balance"]
     
     keyboard = [
+        [InlineKeyboardButton("💳 Купить токены", callback_data="buy_tokens")],
         [InlineKeyboardButton("🏠 В главное меню", callback_data="main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -149,6 +150,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "balance":
         await query.answer()
         await show_balance(update, context)
+    elif query.data == "buy_tokens":
+        await query.answer("🚧 Скоро будет доступно!", show_alert=True)
     elif query.data == "support":
         await query.answer()
         await support(update, context)
