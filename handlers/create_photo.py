@@ -118,36 +118,6 @@ CTR_ENHANCEMENT_PROMPT = """
 ЦЕЛЬ: Создать изображение, которое мгновенно привлекает внимание, передает суть товара за 0.5 секунды просмотра и вызывает желание кликнуть для изучения деталей.
 """
 
-# Screenshot-specific prompt enhancement  
-SCREENSHOT_ENHANCEMENT_PROMPT = """
-КРИТИЧЕСКИ ВАЖНО: Это скриншот страницы маркетплейса с элементами интерфейса.
-
-ЗАДАЧА: Извлечь чистое профессиональное изображение товара для создания оптимальной карточки.
-
-**ЧТО НУЖНО УДАЛИТЬ:**
-• Навигационные панели (верхняя/нижняя)
-• Кнопки интерфейса ("Купить", "В корзину", "Избранное")
-• Фильтры и меню маркетплейса
-• Логотипы маркетплейса (Wildberries, Ozon, Яндекс.Маркет и др.)
-• URL-адреса и элементы браузера
-• Блоки с отзывами и рейтингами
-• Информационные плашки ("Новинка", "Хит", промо-баннеры)
-• Другие товары в рекомендациях
-
-**ЧТО НУЖНО СОХРАНИТЬ/УЛУЧШИТЬ:**
-• Само изображение товара в максимальном качестве
-• Важную информацию о товаре (если она интегрирована в изображение)
-• Композицию товара, но улучшить её для профессионального вида
-
-**КАК ОБРАБОТАТЬ:**
-• Разместить товар по центру с правильным соотношением 3:4
-• Обеспечить высокое разрешение (минимум 1000x1000px)
-• Улучшить контраст и резкость товара
-• Убедиться, что товар занимает 60-70% площади изображения
-
-ЦЕЛЬ: Преобразовать скриншот в профессиональное изображение товарной карточки, готовое для загрузки на маркетплейс.
-"""
-
 
 
 async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -335,8 +305,7 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         # Analyze user intent using Gemma 3 12B classifier
         intent = await analyze_user_intent(prompt, images)
         
-        logging.info(f"[CreatePhoto] Intent analysis: CTR={intent['wants_ctr_improvement']}, "
-                    f"Screenshot={intent['is_screenshot']}")
+        logging.info(f"[CreatePhoto] Intent analysis: CTR={intent['wants_ctr_improvement']}")
         
         # Build enhanced prompt based on classification
         enhanced_prompt = prompt
@@ -346,11 +315,6 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             enhanced_prompt += CTR_ENHANCEMENT_PROMPT
             enhancements_applied.append("CTR optimization")
             logging.info("[CreatePhoto] Added CTR optimization enhancement")
-        
-        if intent['is_screenshot']:
-            enhanced_prompt += SCREENSHOT_ENHANCEMENT_PROMPT
-            enhancements_applied.append("screenshot processing")
-            logging.info("[CreatePhoto] Added screenshot processing enhancement")
         
         # Log the full enhanced prompt when enhancements are applied
         if enhancements_applied:

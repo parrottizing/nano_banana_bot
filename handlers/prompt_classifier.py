@@ -26,9 +26,7 @@ async def analyze_user_intent(prompt: str, images: list = None) -> dict:
         dict with classification results:
         {
             "wants_ctr_improvement": bool,  # True if user wants CTR optimization
-            "is_screenshot": bool,           # True if input is a screenshot of marketplace
-            "raw_ctr_response": str,         # Raw CTR model response for debugging
-            "raw_screenshot_response": str   # Raw screenshot model response for debugging
+            "raw_ctr_response": str          # Raw CTR model response for debugging
         }
     """
     # If no images provided, skip all checks
@@ -36,9 +34,7 @@ async def analyze_user_intent(prompt: str, images: list = None) -> dict:
         logging.info("[PromptClassifier] No images provided, skipping classification")
         return {
             "wants_ctr_improvement": False,
-            "is_screenshot": False,
-            "raw_ctr_response": "skipped: no images",
-            "raw_screenshot_response": "skipped: no images"
+            "raw_ctr_response": "skipped: no images"
         }
     
     try:
@@ -68,34 +64,9 @@ Answer:"""
         
         logging.info(f"[PromptClassifier] CTR intent: {ctr_answer}")
         
-        # 2. Check if image is a screenshot (vision analysis)
-        screenshot_prompt = """Analyze this image and determine if it is a screenshot of a marketplace product page (like Wildberries, Ozon, Яндекс.Маркет, Amazon, etc.).
-
-Answer with ONLY "yes" or "no".
-- Answer "yes" if the image shows visible marketplace interface elements such as: navigation bars, buttons, filters, shopping cart icons, marketplace logos, URL bars, browser elements, or other UI components typical of online marketplace screenshots.
-- Answer "no" if the image is a clean product photo without interface elements, or a photograph, or an artistic image.
-
-Answer:"""
-
-        # Use first image for screenshot detection
-        screenshot_response = await model.generate_content_async(
-            [screenshot_prompt, images[0]],
-            generation_config=genai.GenerationConfig(
-                temperature=CLASSIFICATION_TEMPERATURE,
-                max_output_tokens=10
-            )
-        )
-        
-        screenshot_answer = screenshot_response.text.strip().lower()
-        is_screenshot = screenshot_answer.startswith("yes")
-        
-        logging.info(f"[PromptClassifier] Screenshot detection: {screenshot_answer}")
-        
         return {
             "wants_ctr_improvement": wants_ctr,
-            "is_screenshot": is_screenshot,
-            "raw_ctr_response": ctr_answer,
-            "raw_screenshot_response": screenshot_answer
+            "raw_ctr_response": ctr_answer
         }
         
     except Exception as e:
@@ -103,7 +74,5 @@ Answer:"""
         # Default to False on error to avoid breaking the main flow
         return {
             "wants_ctr_improvement": False,
-            "is_screenshot": False,
-            "raw_ctr_response": f"error: {str(e)}",
-            "raw_screenshot_response": f"error: {str(e)}"
+            "raw_ctr_response": f"error: {str(e)}"
         }

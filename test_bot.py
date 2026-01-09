@@ -240,8 +240,7 @@ class TestBotCommands:
         # Mock the Gemini API
         with patch('handlers.create_photo.analyze_user_intent') as mock_intent:
             mock_intent.return_value = {
-                'wants_ctr_improvement': False,
-                'is_screenshot': False
+                'wants_ctr_improvement': False
             }
             
             with patch('handlers.create_photo.genai.GenerativeModel') as mock_model:
