@@ -371,21 +371,12 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             # Text-only
             content = enhanced_prompt
         
-        # Configure generation parameters
-        # Use 3:4 vertical aspect ratio for CTR improvement requests
-        gen_config = {}
-        if intent['wants_ctr_improvement']:
-            gen_config['aspect_ratio'] = "3:4"
-            logging.info("[CreatePhoto] Using 3:4 aspect ratio for CTR optimization")
-        
         # Generate content
-        if gen_config:
-            response = await model.generate_content_async(
-                content,
-                generation_config=genai.GenerationConfig(**gen_config)
-            )
-        else:
-            response = await model.generate_content_async(content)
+        # Note: Aspect ratio is specified in the prompt text (CTR_ENHANCEMENT_PROMPT includes "3:4")
+        # The older google.generativeai SDK doesn't support image_generation_config
+        if intent['wants_ctr_improvement']:
+            logging.info("[CreatePhoto] CTR mode - aspect ratio specified in prompt text")
+        response = await model.generate_content_async(content)
         
         # Stop animation before sending results
         animation_task.cancel()
@@ -403,10 +394,7 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                     logging.info(f"[CreatePhoto] Found image with mime_type: {part.inline_data.mime_type}")
                     image_data = part.inline_data.data
                     
-                    caption_text = "🎨 Ваше изображение готово!\n\n"
-                    if images:
-                        caption_text += f"📸 Исходных изображений: {len(images)}\n"
-                    caption_text += f"Промпт: _{prompt}_"
+                    caption_text = "🎨 Ваше изображение готово!"
                     
                     # Send as photo for quick preview (Telegram will compress)
                     await context.bot.send_photo(

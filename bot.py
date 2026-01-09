@@ -8,6 +8,7 @@ import google.generativeai as genai
 # Import handlers
 from handlers import create_photo_handler, handle_photo_prompt, handle_create_photo_image
 from handlers import analyze_ctr_handler, handle_ctr_photo, handle_ctr_text
+from handlers import start_ctr_improvement
 
 # Import database
 from database import init_db, get_or_create_user, log_conversation, clear_user_state
@@ -115,6 +116,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await create_photo_handler(update, context)
     elif query.data == "analyze_ctr":
         await analyze_ctr_handler(update, context)
+    elif query.data == "improve_ctr":
+        await start_ctr_improvement(update, context)
     elif query.data == "support":
         await query.answer()
         await support(update, context)

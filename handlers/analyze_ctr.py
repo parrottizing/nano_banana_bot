@@ -5,7 +5,7 @@ Analyzes product card images to provide recommendations for improving CTR.
 import logging
 import io
 import asyncio
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import google.generativeai as genai
 from PIL import Image
@@ -75,18 +75,18 @@ async def run_loading_animation(context: ContextTypes.DEFAULT_TYPE, chat_id: int
         raise
 
 
-async def safe_send_message(bot, chat_id: int, text: str, parse_mode: str = "Markdown"):
+async def safe_send_message(bot, chat_id: int, text: str, parse_mode: str = "Markdown", reply_markup=None):
     """
     Safely send a message with fallback to plain text if Markdown parsing fails.
     This handles cases where AI-generated content has malformed Markdown entities.
     """
     try:
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
     except BadRequest as e:
         if "Can't parse entities" in str(e):
             # Fallback to plain text if Markdown parsing fails
             logging.warning(f"[AnalyzeCTR] Markdown parsing failed, sending as plain text: {e}")
-            await bot.send_message(chat_id=chat_id, text=text, parse_mode=None)
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode=None, reply_markup=reply_markup)
         else:
             raise
 
@@ -230,13 +230,35 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             # Split long messages if needed (Telegram limit is 4096 chars)
             result_text = f"📊 *Результат анализа CTR:*\n\n{response.text}"
             
+            # Store image file_id and recommendations for potential improvement
+            set_user_state(user_id, "ctr_improvement", "ready_to_improve", {
+                "image_file_id": photo.file_id,
+                "recommendations": response.text
+            })
+            
+            # Create improvement button
+            keyboard = [[InlineKeyboardButton(
+                "🚀 Улучшить CTR с Nano Banana", 
+                callback_data="improve_ctr"
+            )]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             if len(result_text) > 4096:
-                # Split into chunks
-                for i in range(0, len(result_text), 4096):
-                    chunk = result_text[i:i+4096]
-                    await safe_send_message(context.bot, chat_id, chunk, parse_mode="Markdown")
+                # Split into chunks, add button to last chunk
+                chunks = [result_text[i:i+4096] for i in range(0, len(result_text), 4096)]
+                for i, chunk in enumerate(chunks):
+                    is_last = (i == len(chunks) - 1)
+                    await safe_send_message(
+                        context.bot, chat_id, chunk, 
+                        parse_mode="Markdown",
+                        reply_markup=reply_markup if is_last else None
+                    )
             else:
-                await safe_send_message(context.bot, chat_id, result_text, parse_mode="Markdown")
+                await safe_send_message(
+                    context.bot, chat_id, result_text, 
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup
+                )
             
             # Deduct balance and log successful analysis
             new_balance = deduct_balance(user_id, "analyze_ctr")
