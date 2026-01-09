@@ -10,7 +10,7 @@ from handlers import create_photo_handler, handle_photo_prompt, handle_create_ph
 from handlers import analyze_ctr_handler, handle_ctr_photo, handle_ctr_text
 
 # Import database
-from database import init_db, get_or_create_user, log_conversation
+from database import init_db, get_or_create_user, log_conversation, clear_user_state
 
 load_dotenv()
 
@@ -45,6 +45,9 @@ async def setup_bot_commands(application):
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /support command - redirect to support contact"""
+    # Clear any pending feature state
+    clear_user_state(update.effective_user.id)
+    
     support_url = f"https://t.me/{SUPPORT_USERNAME}"
     keyboard = [
         [InlineKeyboardButton("💬 Написать в поддержку", url=support_url)],
@@ -66,6 +69,9 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command - show main menu"""
     user = update.effective_user
+    
+    # Clear any pending feature state
+    clear_user_state(user.id)
     
     # Get or create user in database
     db_user = get_or_create_user(user.id, user.username, user.first_name)
