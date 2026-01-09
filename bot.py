@@ -73,12 +73,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Log the start command
     log_conversation(user.id, "start", "command", "/start")
     
-    # Create welcome message with real balance
+    # Create welcome message (balance now shown at feature entry)
     welcome_text = (
         f"Привет, {user.first_name}! 👋\n\n"
-        f"Я помогу сделать карточки товаров привлекательнее.\n\n"
-
-        f"💰 Ваш баланс: {db_user['balance']} токенов"
+        f"Я помогу сделать карточки товаров привлекательнее."
     )
     
     # Create inline keyboard with menu buttons

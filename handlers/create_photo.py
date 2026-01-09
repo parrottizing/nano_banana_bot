@@ -152,6 +152,8 @@ SCREENSHOT_ENHANCEMENT_PROMPT = """
 
 async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Called when user clicks 'Создать фото' button or uses /create_photo command"""
+    from database import get_user
+    
     user_id = update.effective_user.id
     
     # Set user state in database
@@ -160,9 +162,16 @@ async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Log the button click
     log_conversation(user_id, "create_photo", "button_click", "create_photo")
     
+    # Get user balance for display
+    user = get_user(user_id)
+    balance = user['balance'] if user else 0
+    cost = TOKEN_COSTS["create_photo"]
+    
     message_text = (
         "🎨 *Создание фото*\n\n"
-        "Отправьте описание изображения, которое хотите создать или отредактировать."
+        "Отправьте описание изображения, которое хотите создать или отредактировать.\n\n"
+        f"_Стоимость: {cost} токенов_\n"
+        f"_Ваш баланс: {balance} токенов_"
     )
     
     # Check if this is a callback query (inline button) or a command

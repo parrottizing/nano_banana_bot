@@ -134,6 +134,8 @@ CTR_ANALYSIS_PROMPT = """Ты эксперт по маркетплейсам (Wi
 
 async def analyze_ctr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Called when user clicks 'Анализ CTR' button or uses /analyze_ctr command"""
+    from database import get_user
+    
     user_id = update.effective_user.id
     
     # Set user state in database
@@ -142,9 +144,16 @@ async def analyze_ctr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Log the button click
     log_conversation(user_id, "analyze_ctr", "button_click", "analyze_ctr")
     
+    # Get user balance for display
+    user = get_user(user_id)
+    balance = user['balance'] if user else 0
+    cost = TOKEN_COSTS["analyze_ctr"]
+    
     message_text = (
         "📊 *Анализ CTR карточки товара*\n\n"
         "📸 Отправьте фото карточки товара или скриншот с маркетплейса.\n\n"
+        f"_Стоимость: {cost} токенов_\n"
+        f"_Ваш баланс: {balance} токенов_"
     )
     
     # Check if this is a callback query (inline button) or a command
