@@ -67,6 +67,32 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show user's current token balance"""
+    user = update.effective_user
+    
+    # Get user from database
+    db_user = get_or_create_user(user.id, user.username, user.first_name)
+    balance = db_user["balance"]
+    
+    keyboard = [
+        [InlineKeyboardButton("🏠 В главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=(
+            f"💰 *Ваш баланс*\n\n"
+            f"🪙 У вас *{balance}* токенов\n\n"
+            f"📝 Стоимость операций:\n"
+            f"• Создание фото — 1 токен\n"
+            f"• Анализ CTR — 1 токен"
+        ),
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command - show main menu"""
     user = update.effective_user
@@ -93,6 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📊 Анализ CTR", callback_data="analyze_ctr"),
         ],
         [
+            InlineKeyboardButton("💰 Баланс", callback_data="balance"),
             InlineKeyboardButton("🆘 Поддержка", callback_data="support"),
         ]
     ]
@@ -118,6 +145,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await analyze_ctr_handler(update, context)
     elif query.data == "improve_ctr":
         await start_ctr_improvement(update, context)
+    elif query.data == "balance":
+        await query.answer()
+        await show_balance(update, context)
     elif query.data == "support":
         await query.answer()
         await support(update, context)
