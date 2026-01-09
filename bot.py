@@ -48,7 +48,11 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="🆘 *Поддержка*\n\nНажмите кнопку ниже, чтобы связаться с нашей командой поддержки.",
+        text=(
+            "🆘 *Поддержка*\n\n"
+            "📝 Опишите проблему подробно — так мы поможем быстрее\n"
+            "🤝 Будем рады вашей обратной связи!"
+        ),
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
