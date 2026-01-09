@@ -28,14 +28,30 @@ else:
 
 MODEL_NAME = "gemini-3-pro-image-preview"
 
+SUPPORT_USERNAME = "your_tech_support"  # Support contact username (without @)
+
 async def setup_bot_commands(application):
     """Set up bot menu button commands"""
     commands = [
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("create_photo", "🎨 Создать фото"),
         BotCommand("analyze_ctr", "📊 Анализ CTR"),
+        BotCommand("support", "🆘 Поддержка"),
     ]
     await application.bot.set_my_commands(commands)
+
+async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /support command - redirect to support contact"""
+    support_url = f"https://t.me/{SUPPORT_USERNAME}"
+    keyboard = [[InlineKeyboardButton("💬 Написать в поддержку", url=support_url)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🆘 *Поддержка*\n\nНажмите кнопку ниже, чтобы связаться с нашей командой поддержки.",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command - show main menu"""
@@ -49,9 +65,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚡ Модель: {MODEL_NAME}\n\n"
         f"👇 Выберите раздел в меню ниже."
     )
-    
-    # Support contact username (without @)
-    SUPPORT_USERNAME = "gumlet1"  # Change this to your support contact username
     
     # Create inline keyboard with menu buttons
     keyboard = [
@@ -128,6 +141,7 @@ if __name__ == '__main__':
     
     
     start_handler = CommandHandler('start', start)
+    support_cmd_handler = CommandHandler('support', support)
     create_photo_cmd_handler = CommandHandler('create_photo', lambda update, context: create_photo_handler(update, context))
     analyze_ctr_cmd_handler = CommandHandler('analyze_ctr', lambda update, context: analyze_ctr_handler(update, context))
     callback_handler = CallbackQueryHandler(button_callback)
@@ -135,6 +149,7 @@ if __name__ == '__main__':
     photo_handler = MessageHandler(filters.PHOTO, handle_photo)
     
     application.add_handler(start_handler)
+    application.add_handler(support_cmd_handler)
     application.add_handler(create_photo_cmd_handler)
     application.add_handler(analyze_ctr_cmd_handler)
     application.add_handler(callback_handler)
