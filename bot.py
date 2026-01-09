@@ -85,7 +85,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         text=(
             f"💰 *Ваш баланс*\n\n"
-            f"🪙 У вас *{balance}* токенов\n\n"
+            f"🎫 У вас *{balance}* токенов\n\n"
             f"📝 Стоимость операций:\n"
             f"• Создание фото — 1 токен\n"
             f"• Анализ CTR — 1 токен"
