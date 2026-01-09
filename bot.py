@@ -75,11 +75,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Create welcome message with real balance
     welcome_text = (
-        f"👤 Имя: {user.first_name}"
-        + (f" (@{user.username})" if user.username else "") + "\n"
-        f"💰 Баланс: {db_user['balance']} токенов\n"
-        f"⚡ Модель: {MODEL_NAME}\n\n"
-        f"👇 Выберите раздел в меню ниже."
+        f"Привет, {user.first_name}! 👋\n\n"
+        f"Я помогу сделать карточки товаров привлекательнее.\n\n"
+
+        f"💰 Ваш баланс: {db_user['balance']} токенов"
     )
     
     # Create inline keyboard with menu buttons
