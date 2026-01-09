@@ -50,11 +50,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👇 Выберите раздел в меню ниже."
     )
     
-    # Create inline keyboard with two buttons
+    # Support contact username (without @)
+    SUPPORT_USERNAME = "gumlet1"  # Change this to your support contact username
+    
+    # Create inline keyboard with menu buttons
     keyboard = [
         [
             InlineKeyboardButton("🎨 Создать фото", callback_data="create_photo"),
             InlineKeyboardButton("📊 Анализ CTR", callback_data="analyze_ctr"),
+        ],
+        [
+            InlineKeyboardButton("🆘 Поддержка", url=f"https://t.me/{SUPPORT_USERNAME}"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
