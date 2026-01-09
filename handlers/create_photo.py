@@ -13,7 +13,7 @@ from .prompt_classifier import analyze_user_intent
 from database import (
     get_user_state, set_user_state, clear_user_state,
     log_conversation, check_balance, deduct_balance,
-    TOKEN_COSTS
+    update_user_balance, TOKEN_COSTS
 )
 
 MODEL_NAME = "gemini-3-pro-image-preview"
@@ -392,6 +392,17 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             if response.text:
                 await context.bot.send_message(chat_id=chat_id, text=response.text)
                 has_content = True
+                
+                # Deduct token for text response (if image wasn't already generated)
+                if not any(hasattr(part, 'inline_data') and part.inline_data for part in response.parts if hasattr(response, 'parts')):
+                    new_balance = update_user_balance(user_id, -1)
+                    log_conversation(
+                        user_id, "create_photo", "bot_text_response", prompt,
+                        image_count=len(images),
+                        tokens_used=1,
+                        success=True
+                    )
+                    logging.info(f"[CreatePhoto] Text response - Deducted 1 token from user {user_id}, new balance: {new_balance}")
         except ValueError:
             pass
 
