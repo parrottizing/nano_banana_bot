@@ -69,9 +69,8 @@ async def start_ctr_improvement(update: Update, context: ContextTypes.DEFAULT_TY
     # Send processing message
     await context.bot.send_message(
         chat_id=chat_id,
-        text="🚀 *Улучшаем карточку товара...*\n\n"
-             "Используем рекомендации из анализа CTR для создания "
-             "оптимизированного изображения.",
+        text="🚀 *Улучшаем карточку товара"
+  
         parse_mode="Markdown"
     )
     
