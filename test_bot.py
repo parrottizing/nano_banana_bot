@@ -166,6 +166,66 @@ class TestBotCommands:
         print("✅ 'Анализ CTR' button works correctly!")
     
     @pytest.mark.asyncio
+    async def test_support_command(self, mock_update, mock_context):
+        """Test /support command displays support message with button"""
+        print("\n🧪 Testing /support command...")
+        
+        from bot import support
+        
+        await support(mock_update, mock_context)
+        
+        # Verify that send_message was called
+        mock_context.bot.send_message.assert_called_once()
+        call_args = mock_context.bot.send_message.call_args
+        
+        # Check that it was sent to the correct chat
+        assert call_args.kwargs['chat_id'] == 12345
+        
+        # Check that the message contains support text
+        message_text = call_args.kwargs['text']
+        assert "Поддержка" in message_text
+        
+        # Check that the inline keyboard is present with URL button
+        reply_markup = call_args.kwargs['reply_markup']
+        assert reply_markup is not None
+        
+        # Verify the button has a URL (not callback_data)
+        button = reply_markup.inline_keyboard[0][0]
+        assert button.url is not None
+        assert "t.me" in button.url
+        
+        print("✅ /support command works correctly!")
+    
+    @pytest.mark.asyncio
+    async def test_start_menu_has_support_button(self, mock_update, mock_context):
+        """Test that /start menu includes Support button"""
+        print("\n🧪 Testing Support button in /start menu...")
+        
+        # Mock the banner file
+        with patch('builtins.open', mock_open(read_data=b'fake_image_data')):
+            with patch('os.path.join', return_value='/fake/path/menu_banner.png'):
+                await start(mock_update, mock_context)
+        
+        # Get the inline keyboard from the call
+        call_args = mock_context.bot.send_photo.call_args
+        reply_markup = call_args.kwargs['reply_markup']
+        
+        # Find the support button
+        support_button_found = False
+        for row in reply_markup.inline_keyboard:
+            for button in row:
+                if "Поддержка" in button.text:
+                    support_button_found = True
+                    # Verify it's a URL button, not callback
+                    assert button.url is not None
+                    assert "t.me" in button.url
+                    break
+        
+        assert support_button_found, "Support button not found in main menu"
+        
+        print("✅ Support button present in /start menu!")
+    
+    @pytest.mark.asyncio
     async def test_create_photo_text_prompt(self, mock_update, mock_context):
         """Test sending text prompt after clicking 'Создать фото'"""
         print("\n🧪 Testing text prompt in photo creation mode...")
