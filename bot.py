@@ -95,6 +95,34 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def show_buy_tokens_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show token purchase menu with different price options"""
+    keyboard = [
+        [InlineKeyboardButton("💰 100₽ → 100 токенов", callback_data="buy_100")],
+        [InlineKeyboardButton("💰 300₽ → 325 токенов", callback_data="buy_300")],
+        [InlineKeyboardButton("💰 1000₽ → 1100 токенов", callback_data="buy_1000")],
+        [InlineKeyboardButton("💰 3000₽ → 3500 токенов", callback_data="buy_3000")],
+        [InlineKeyboardButton("💰 5000₽ → 6000 токенов", callback_data="buy_5000")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="balance")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=(
+            "💳 *Покупка токенов*\n\n"
+            "🎨 Генерация изображения — 25 токенов\n\n"
+            "Выберите подходящий пакет:\n\n"
+            "• 100₽ — 100 токенов\n"
+            "• 300₽ — 325 токенов (+25 бонус)\n"
+            "• 1000₽ — 1100 токенов (+100 бонус)\n"
+            "• 3000₽ — 3500 токенов (+500 бонус)\n"
+            "• 5000₽ — 6000 токенов (+1000 бонус)"
+        ),
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command - show main menu"""
     user = update.effective_user
@@ -151,7 +179,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         await show_balance(update, context)
     elif query.data == "buy_tokens":
-        await query.answer("🚧 Скоро будет доступно!", show_alert=True)
+        await query.answer()
+        await show_buy_tokens_menu(update, context)
+    elif query.data.startswith("buy_"):
+        # Handle token purchase buttons (functionality to be added later)
+        await query.answer("🚧 Оплата скоро будет доступна!", show_alert=True)
     elif query.data == "support":
         await query.answer()
         await support(update, context)
