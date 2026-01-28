@@ -387,24 +387,34 @@ async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return True
 
+async def _generate_single_image(model, content, index: int) -> tuple[int, bytes | None]:
+    """
+    Generate a single image. Returns (index, image_data) or (index, None) on failure.
+    """
+    try:
+        response = await model.generate_content_async(content)
+        if hasattr(response, 'parts'):
+            for part in response.parts:
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    return (index, part.inline_data.data)
+    except Exception as e:
+        logging.error(f"[CreatePhoto] Error generating image {index+1}: {e}")
+    return (index, None)
+
+
 async def _process_image_generation(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                                    prompt: str, images: list):
     """
     Internal function to process image generation with optional image inputs.
-    Generates N images based on user's image_count setting.
-    
-    Args:
-        update: Telegram update
-        context: Telegram context
-        prompt: Text prompt from user
-        images: List of PIL Image objects (can be empty)
+    Generates N images in parallel, then sends as grouped media.
     """
+    from telegram import InputMediaPhoto, InputMediaDocument
+    
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     
     # Get user's image count setting
     target_image_count = get_user_image_count(user_id)
-    total_cost = TOKEN_COSTS["create_photo"] * target_image_count
     
     # Log the user's prompt
     log_conversation(
@@ -423,22 +433,12 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         
         # Build enhanced prompt based on classification
         enhanced_prompt = prompt
-        enhancements_applied = []
-        
         if intent['wants_ctr_improvement']:
             enhanced_prompt += CTR_ENHANCEMENT_PROMPT
-            enhancements_applied.append("CTR optimization")
             logging.info("[CreatePhoto] Added CTR optimization enhancement")
         
-        # Log the full enhanced prompt when enhancements are applied
-        if enhancements_applied:
-            logging.info(f"[CreatePhoto] Enhancements applied: {', '.join(enhancements_applied)}")
-            logging.info(f"[CreatePhoto] === FULL ENHANCED PROMPT START ===")
-            logging.info(f"{enhanced_prompt}")
-            logging.info(f"[CreatePhoto] === FULL ENHANCED PROMPT END ===")
-        
         model = genai.GenerativeModel(MODEL_NAME)
-        logging.info(f"[CreatePhoto] Generating {target_image_count} images with prompt: {prompt}, source images: {len(images)}")
+        logging.info(f"[CreatePhoto] Generating {target_image_count} images in parallel")
         
         # Build the content for multimodal input
         if images:
@@ -446,46 +446,13 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         else:
             content = enhanced_prompt
         
-        # Generate N images
-        generated_count = 0
-        for i in range(target_image_count):
-            try:
-                if intent['wants_ctr_improvement']:
-                    logging.info(f"[CreatePhoto] Generating image {i+1}/{target_image_count} (CTR mode)")
-                
-                response = await model.generate_content_async(content)
-                
-                # Check for image parts in response
-                if hasattr(response, 'parts'):
-                    for part in response.parts:
-                        if hasattr(part, 'inline_data') and part.inline_data:
-                            logging.info(f"[CreatePhoto] Generated image {i+1}/{target_image_count}")
-                            image_data = part.inline_data.data
-                            
-                            caption_text = f"🎨 Вариант {i+1}/{target_image_count}"
-                            
-                            # Send as photo for quick preview
-                            await context.bot.send_photo(
-                                chat_id=chat_id, 
-                                photo=io.BytesIO(image_data),
-                                caption=caption_text,
-                                parse_mode="Markdown"
-                            )
-                            
-                            # Send as document for full quality
-                            await context.bot.send_document(
-                                chat_id=chat_id,
-                                document=io.BytesIO(image_data),
-                                filename=f"generated_image_{i+1}.png",
-                                caption=f"📥 Вариант {i+1} в оригинальном качестве"
-                            )
-                            generated_count += 1
-                            break  # One image per API call
-                
-            except Exception as gen_error:
-                logging.error(f"[CreatePhoto] Error generating image {i+1}: {gen_error}")
-                # Continue with next image instead of failing completely
-                continue
+        # Generate all images in parallel
+        tasks = [_generate_single_image(model, content, i) for i in range(target_image_count)]
+        results = await asyncio.gather(*tasks)
+        
+        # Collect successful images (preserving order)
+        generated_images = [(idx, data) for idx, data in sorted(results) if data is not None]
+        generated_count = len(generated_images)
         
         # Stop animation
         animation_task.cancel()
@@ -495,7 +462,43 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             pass
         
         if generated_count > 0:
-            # Deduct balance for successfully generated images
+            # Send all images as one media group (previews)
+            if generated_count == 1:
+                # Single image - send normally
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=io.BytesIO(generated_images[0][1]),
+                    caption="🎨 Ваше изображение готово!"
+                )
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=io.BytesIO(generated_images[0][1]),
+                    filename="generated_image.png",
+                    caption="📥 Изображение в оригинальном качестве"
+                )
+            else:
+                # Multiple images - send as media groups
+                photo_media = [
+                    InputMediaPhoto(
+                        media=io.BytesIO(data),
+                        caption=f"🎨 Вариант {idx+1}" if idx == 0 else None
+                    )
+                    for idx, data in generated_images
+                ]
+                await context.bot.send_media_group(chat_id=chat_id, media=photo_media)
+                
+                # Send documents as media group
+                doc_media = [
+                    InputMediaDocument(
+                        media=io.BytesIO(data),
+                        filename=f"image_{idx+1}.png",
+                        caption="📥 Оригинальное качество" if idx == 0 else None
+                    )
+                    for idx, data in generated_images
+                ]
+                await context.bot.send_media_group(chat_id=chat_id, media=doc_media)
+            
+            # Deduct balance
             actual_cost = TOKEN_COSTS["create_photo"] * generated_count
             new_balance = update_user_balance(user_id, -actual_cost)
             
@@ -505,27 +508,17 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                 tokens_used=actual_cost,
                 success=True
             )
-            logging.info(f"[CreatePhoto] Generated {generated_count}/{target_image_count} images. Deducted {actual_cost} tokens, new balance: {new_balance}")
+            logging.info(f"[CreatePhoto] Generated {generated_count}/{target_image_count} images. Deducted {actual_cost} tokens")
             
             # Summary message
-            if generated_count == target_image_count:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"✅ Готово! Создано {generated_count} вариант(ов).\n💰 Списано: {actual_cost} токенов"
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"✅ Создано {generated_count} из {target_image_count} вариантов.\n💰 Списано: {actual_cost} токенов"
-                )
-        else:
             await context.bot.send_message(
-                chat_id=chat_id, 
-                text="❌ Не удалось сгенерировать изображения."
+                chat_id=chat_id,
+                text=f"✅ Готово! Создано {generated_count} вариант(ов).\n💰 Списано: {actual_cost} токенов"
             )
+        else:
+            await context.bot.send_message(chat_id=chat_id, text="❌ Не удалось сгенерировать изображения.")
         
     except Exception as e:
-        # Ensure animation is stopped on error
         if not animation_task.done():
             animation_task.cancel()
             try:
@@ -536,10 +529,8 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
         logging.error(f"[CreatePhoto] Error: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка: {e}")
         
-        # Log the error
         log_conversation(
             user_id, "create_photo", "error", str(e),
             image_count=len(images),
             success=False
         )
-
