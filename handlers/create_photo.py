@@ -27,6 +27,9 @@ MAX_IMAGE_SIZE_MB = 7
 PHOTO_LOADING_EMOJIS = ["🤔", "💡", "🎨"]
 ANIMATION_STEP_DELAY = 2.9  # Seconds between emoji changes
 
+# Media group (album) configuration
+MEDIA_GROUP_TIMEOUT = 1.5  # Seconds to wait for more images in album
+
 async def run_loading_animation(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """
     Runs a cycling loading animation that sends, edits, and deletes messages.
@@ -258,9 +261,135 @@ async def show_change_image_count_menu(update: Update, context: ContextTypes.DEF
     
     await query.message.reply_text(message_text, parse_mode="Markdown", reply_markup=reply_markup)
 
+async def _collect_media_group_image(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                     media_group_id: str, caption: str | None) -> bool:
+    """
+    Collect images from a media group (album) and schedule delayed processing.
+    Returns True if image was collected successfully.
+    """
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    group_key = f"media_group_{media_group_id}"
+    timer_key = f"{group_key}_timer"
+    
+    # Cancel previous timer if exists (more images arriving)
+    if timer_key in context.user_data and context.user_data[timer_key]:
+        context.user_data[timer_key].cancel()
+        context.user_data[timer_key] = None
+    
+    try:
+        # Get the largest photo size
+        photo = update.message.photo[-1]
+        
+        # Check file size
+        file_size_mb = photo.file_size / (1024 * 1024) if photo.file_size else 0
+        if file_size_mb > MAX_IMAGE_SIZE_MB:
+            logging.warning(f"[CreatePhoto] Skipping large image ({file_size_mb:.1f}MB) in media group")
+            return False
+        
+        # Download the image
+        file = await photo.get_file()
+        image_bytes = await file.download_as_bytearray()
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # Initialize group storage if needed
+        if group_key not in context.user_data:
+            context.user_data[group_key] = {"images": [], "caption": None, "update": update}
+        
+        # Check limit
+        if len(context.user_data[group_key]["images"]) >= MAX_IMAGES:
+            logging.warning(f"[CreatePhoto] Media group reached limit ({MAX_IMAGES})")
+            return False
+        
+        # Add image to collection
+        context.user_data[group_key]["images"].append(image)
+        
+        # Store caption from first image that has one
+        if caption and not context.user_data[group_key]["caption"]:
+            context.user_data[group_key]["caption"] = caption
+        
+        # Keep reference to latest update for processing
+        context.user_data[group_key]["update"] = update
+        
+        logging.info(f"[CreatePhoto] Collected image {len(context.user_data[group_key]['images'])}/{MAX_IMAGES} "
+                    f"for media group {media_group_id}")
+        
+        # Schedule processing after timeout
+        async def process_after_timeout():
+            try:
+                await asyncio.sleep(MEDIA_GROUP_TIMEOUT)
+                await _process_collected_media_group(context, user_id, chat_id, group_key)
+            except asyncio.CancelledError:
+                pass  # Timer was cancelled, more images coming
+        
+        task = asyncio.create_task(process_after_timeout())
+        context.user_data[timer_key] = task
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"[CreatePhoto] Error collecting media group image: {e}", exc_info=True)
+        return False
+
+
+async def _process_collected_media_group(context: ContextTypes.DEFAULT_TYPE, 
+                                         user_id: int, chat_id: int, group_key: str):
+    """
+    Process all collected images from a media group after timeout.
+    """
+    timer_key = f"{group_key}_timer"
+    
+    # Get collected data
+    group_data = context.user_data.get(group_key)
+    if not group_data:
+        logging.warning(f"[CreatePhoto] No data found for {group_key}")
+        return
+    
+    images = group_data.get("images", [])
+    caption = group_data.get("caption")
+    update = group_data.get("update")
+    
+    # Cleanup
+    context.user_data.pop(group_key, None)
+    context.user_data.pop(timer_key, None)
+    
+    if not images:
+        logging.warning(f"[CreatePhoto] No images in media group {group_key}")
+        return
+    
+    if not caption:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ Пожалуйста, добавьте описание к вашим изображениям.\n\n"
+                 "Отправьте изображения снова с подписью.",
+            parse_mode="Markdown"
+        )
+        clear_user_state(user_id)
+        return
+    
+    logging.info(f"[CreatePhoto] Processing media group with {len(images)} images")
+    
+    # Check balance
+    image_count = get_user_image_count(user_id)
+    total_cost = TOKEN_COSTS["create_photo"] * image_count
+    if not check_balance(user_id, total_cost):
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} вариантов)\n"
+                 "Пополните баланс для продолжения."
+        )
+        clear_user_state(user_id)
+        return
+    
+    # Process all images together
+    await _process_image_generation(update, context, caption, images)
+    clear_user_state(user_id)
+
+
 async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Handle incoming images when user is in photo creation mode.
+    Supports both single images and media groups (albums) with up to MAX_IMAGES images.
     Returns True if the message was handled, False otherwise.
     """
     user_id = update.effective_user.id
@@ -270,12 +399,19 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
     if not state or state.get("feature") != "create_photo" or state.get("state") != "awaiting_photo_input":
         return False
     
-    # Check if image has caption
     caption = update.message.caption
+    media_group_id = update.message.media_group_id
+    
+    # Handle media group (album) - collect images and process after timeout
+    if media_group_id:
+        await _collect_media_group_image(update, context, media_group_id, caption)
+        return True
+    
+    # Single image - require caption
     if not caption:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="⚠️ Пожалуйста, отправьте изображение с текстовым описанием в подписи.\\n\\n"
+            text="⚠️ Пожалуйста, отправьте изображение с текстовым описанием в подписи.\n\n"
                  "Например: добавьте подпись _'добавь шляпу этому коту'_ к вашему фото.",
             parse_mode="Markdown"
         )
@@ -291,20 +427,6 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
                  "Пополните баланс для продолжения."
         )
         clear_user_state(user_id)
-        return True
-    
-    # Get current images from state (note: images are not persisted to DB, only count)
-    # For now we handle images in-memory within one session
-    current_images = context.user_data.get("pending_images", [])
-    if len(current_images) >= MAX_IMAGES:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"⚠️ Достигнут лимит изображений ({MAX_IMAGES}). Обрабатываю..."
-        )
-        # Process with current images
-        await _process_image_generation(update, context, caption, current_images)
-        clear_user_state(user_id)
-        context.user_data.pop("pending_images", None)
         return True
     
     try:
@@ -327,16 +449,11 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
         # Open with PIL to ensure proper format
         image = Image.open(io.BytesIO(image_bytes))
         
-        # Store PIL Image object in context.user_data (temporary storage)
-        current_images.append(image)
-        context.user_data["pending_images"] = current_images
+        logging.info(f"[CreatePhoto] User {user_id} sent single image with caption")
         
-        logging.info(f"[CreatePhoto] User {user_id} added image {len(current_images)}/{MAX_IMAGES}")
-        
-        # Process immediately with the caption
-        await _process_image_generation(update, context, caption, current_images)
+        # Process immediately with single image
+        await _process_image_generation(update, context, caption, [image])
         clear_user_state(user_id)
-        context.user_data.pop("pending_images", None)
         
     except Exception as e:
         logging.error(f"[CreatePhoto] Error downloading image: {e}", exc_info=True)
@@ -347,6 +464,7 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
         log_conversation(user_id, "create_photo", "error", str(e), success=False)
     
     return True
+
 
 async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
