@@ -9,6 +9,7 @@ import google.generativeai as genai
 from handlers import create_photo_handler, handle_photo_prompt, handle_create_photo_image
 from handlers import analyze_ctr_handler, handle_ctr_photo, handle_ctr_text
 from handlers import start_ctr_improvement
+from handlers import handle_image_count_selection, show_change_image_count_menu
 
 # Import database
 from database import init_db, get_or_create_user, log_conversation, clear_user_state, TOKEN_COSTS
@@ -175,6 +176,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await analyze_ctr_handler(update, context)
     elif query.data == "improve_ctr":
         await start_ctr_improvement(update, context)
+    elif query.data.startswith("set_image_count_"):
+        await handle_image_count_selection(update, context)
+    elif query.data == "change_image_count":
+        await show_change_image_count_menu(update, context)
     elif query.data == "balance":
         await query.answer()
         await show_balance(update, context)

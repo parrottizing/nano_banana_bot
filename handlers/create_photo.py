@@ -13,8 +13,11 @@ from .prompt_classifier import analyze_user_intent
 from database import (
     get_user_state, set_user_state, clear_user_state,
     log_conversation, check_balance, deduct_balance,
-    update_user_balance, TOKEN_COSTS
+    update_user_balance, TOKEN_COSTS, get_user,
+    get_user_image_count, set_user_image_count,
+    should_show_image_count_prompt, mark_image_count_prompt_seen
 )
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 MODEL_NAME = "gemini-3-pro-image-preview"
 MAX_IMAGES = 5
@@ -122,9 +125,12 @@ CTR_ENHANCEMENT_PROMPT = """
 
 async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Called when user clicks 'Создать фото' button or uses /create_photo command"""
-    from database import get_user
-    
     user_id = update.effective_user.id
+    
+    # Check if user should see one-time image count selection prompt
+    if should_show_image_count_prompt(user_id):
+        await _show_image_count_selection(update, context, user_id)
+        return
     
     # Set user state in database
     set_user_state(user_id, "create_photo", "awaiting_photo_input", {"images": []})
@@ -132,26 +138,125 @@ async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Log the button click
     log_conversation(user_id, "create_photo", "button_click", "create_photo")
     
-    # Get user balance for display
+    # Get user data for display
     user = get_user(user_id)
     balance = user['balance'] if user else 0
-    cost = TOKEN_COSTS["create_photo"]
+    image_count = get_user_image_count(user_id)
+    cost = TOKEN_COSTS["create_photo"] * image_count
     
     message_text = (
         "🎨 *Создание фото*\n\n"
         "Отправьте описание изображения, которое хотите создать или отредактировать.\n\n"
-        f"_Стоимость: {cost} токенов_\n"
-        f"_Ваш баланс: {balance} токенов_"
+        f"📸 _Вариантов: {image_count}_\n"
+        f"💰 _Стоимость: {cost} токенов_\n"
+        f"🎫 _Ваш баланс: {balance} токенов_"
     )
+    
+    # Add button to change image count setting
+    keyboard = [[InlineKeyboardButton("⚙️ Изменить кол-во вариантов", callback_data="change_image_count")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Check if this is a callback query (inline button) or a command
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        await query.message.reply_text(message_text, parse_mode="Markdown")
+        await query.message.reply_text(message_text, parse_mode="Markdown", reply_markup=reply_markup)
     else:
         # This is a direct command (from menu or typed)
-        await update.message.reply_text(message_text, parse_mode="Markdown")
+        await update.message.reply_text(message_text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
+async def _show_image_count_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """
+    Show the one-time image count selection prompt.
+    This is displayed once when user first buys tokens.
+    """
+    message_text = (
+        "🎨 *Сколько вариантов создавать за раз?*\n\n"
+        "AI-генерация — творческий процесс. Чем больше вариантов, "
+        "тем выше шанс найти идеальный результат.\n\n"
+        "• 1 вариант — 25 токенов\n"
+        "• 2 варианта — 50 токенов\n"
+        "• 4 варианта — 100 токенов ⭐\n\n"
+        "_💡 Изменить можно в любой момент_"
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("1️⃣", callback_data="set_image_count_1"),
+            InlineKeyboardButton("2️⃣", callback_data="set_image_count_2"),
+            InlineKeyboardButton("4️⃣ ⭐", callback_data="set_image_count_4"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.message.reply_text(message_text, parse_mode="Markdown", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(message_text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
+async def handle_image_count_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle image count selection from inline buttons.
+    Called for callbacks: set_image_count_1, set_image_count_2, set_image_count_4
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Parse the selected count from callback data
+    count_str = query.data.replace("set_image_count_", "")
+    count = int(count_str)
+    
+    # Save the preference
+    set_user_image_count(user_id, count)
+    mark_image_count_prompt_seen(user_id)
+    
+    await query.answer(f"✅ Установлено: {count} вариант(ов)")
+    
+    # Now proceed to create_photo flow
+    await create_photo_handler(update, context)
+
+
+async def show_change_image_count_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Show menu to change image count setting (accessible anytime).
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    current_count = get_user_image_count(user_id)
+    
+    await query.answer()
+    
+    # Build labels with checkmark for current selection
+    labels = {
+        1: "1️⃣" + (" ✓" if current_count == 1 else ""),
+        2: "2️⃣" + (" ✓" if current_count == 2 else ""),
+        4: "4️⃣ ⭐" + (" ✓" if current_count == 4 else ""),
+    }
+    
+    message_text = (
+        "⚙️ *Количество вариантов*\n\n"
+        f"Сейчас: *{current_count}* вариант(ов)\n\n"
+        "• 1 вариант — 25 токенов\n"
+        "• 2 варианта — 50 токенов\n"
+        "• 4 варианта — 100 токенов\n\n"
+        "_Больше вариантов = выше шанс на идеальный результат_"
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(labels[1], callback_data="set_image_count_1"),
+            InlineKeyboardButton(labels[2], callback_data="set_image_count_2"),
+            InlineKeyboardButton(labels[4], callback_data="set_image_count_4"),
+        ],
+        [InlineKeyboardButton("🔙 Назад", callback_data="create_photo")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.message.reply_text(message_text, parse_mode="Markdown", reply_markup=reply_markup)
 
 async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
@@ -176,11 +281,13 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
         )
         return True
     
-    # Check balance before processing
-    if not check_balance(user_id, TOKEN_COSTS["create_photo"]):
+    # Check balance before processing (cost depends on image count setting)
+    image_count = get_user_image_count(user_id)
+    total_cost = TOKEN_COSTS["create_photo"] * image_count
+    if not check_balance(user_id, total_cost):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Недостаточно токенов! Требуется: {TOKEN_COSTS['create_photo']}\n"
+            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} вариантов)\n"
                  "Пополните баланс для продолжения."
         )
         clear_user_state(user_id)
@@ -253,11 +360,13 @@ async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not state or state.get("feature") != "create_photo" or state.get("state") != "awaiting_photo_input":
         return False
     
-    # Check balance before processing
-    if not check_balance(user_id, TOKEN_COSTS["create_photo"]):
+    # Check balance before processing (cost depends on image count setting)
+    image_count = get_user_image_count(user_id)
+    total_cost = TOKEN_COSTS["create_photo"] * image_count
+    if not check_balance(user_id, total_cost):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Недостаточно токенов! Требуется: {TOKEN_COSTS['create_photo']}\n"
+            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} вариантов)\n"
                  "Пополните баланс для продолжения."
         )
         clear_user_state(user_id)
@@ -282,6 +391,7 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                                    prompt: str, images: list):
     """
     Internal function to process image generation with optional image inputs.
+    Generates N images based on user's image_count setting.
     
     Args:
         update: Telegram update
@@ -291,6 +401,10 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
     """
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+    
+    # Get user's image count setting
+    target_image_count = get_user_image_count(user_id)
+    total_cost = TOKEN_COSTS["create_photo"] * target_image_count
     
     # Log the user's prompt
     log_conversation(
@@ -324,92 +438,90 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             logging.info(f"[CreatePhoto] === FULL ENHANCED PROMPT END ===")
         
         model = genai.GenerativeModel(MODEL_NAME)
-        logging.info(f"[CreatePhoto] Generating with prompt: {prompt}, images: {len(images)}")
+        logging.info(f"[CreatePhoto] Generating {target_image_count} images with prompt: {prompt}, source images: {len(images)}")
         
         # Build the content for multimodal input
-        # For google.generativeai, we pass images and text directly in a list
         if images:
-            # Multi-modal: images + enhanced text
             content = images + [enhanced_prompt]
         else:
-            # Text-only
             content = enhanced_prompt
         
-        # Generate content
-        # Note: Aspect ratio is specified in the prompt text (CTR_ENHANCEMENT_PROMPT includes "3:4")
-        # The older google.generativeai SDK doesn't support image_generation_config
-        if intent['wants_ctr_improvement']:
-            logging.info("[CreatePhoto] CTR mode - aspect ratio specified in prompt text")
-        response = await model.generate_content_async(content)
+        # Generate N images
+        generated_count = 0
+        for i in range(target_image_count):
+            try:
+                if intent['wants_ctr_improvement']:
+                    logging.info(f"[CreatePhoto] Generating image {i+1}/{target_image_count} (CTR mode)")
+                
+                response = await model.generate_content_async(content)
+                
+                # Check for image parts in response
+                if hasattr(response, 'parts'):
+                    for part in response.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            logging.info(f"[CreatePhoto] Generated image {i+1}/{target_image_count}")
+                            image_data = part.inline_data.data
+                            
+                            caption_text = f"🎨 Вариант {i+1}/{target_image_count}"
+                            
+                            # Send as photo for quick preview
+                            await context.bot.send_photo(
+                                chat_id=chat_id, 
+                                photo=io.BytesIO(image_data),
+                                caption=caption_text,
+                                parse_mode="Markdown"
+                            )
+                            
+                            # Send as document for full quality
+                            await context.bot.send_document(
+                                chat_id=chat_id,
+                                document=io.BytesIO(image_data),
+                                filename=f"generated_image_{i+1}.png",
+                                caption=f"📥 Вариант {i+1} в оригинальном качестве"
+                            )
+                            generated_count += 1
+                            break  # One image per API call
+                
+            except Exception as gen_error:
+                logging.error(f"[CreatePhoto] Error generating image {i+1}: {gen_error}")
+                # Continue with next image instead of failing completely
+                continue
         
-        # Stop animation before sending results
+        # Stop animation
         animation_task.cancel()
         try:
             await animation_task
         except asyncio.CancelledError:
             pass
-
-        has_content = False
-
-        # Check for image parts
-        if hasattr(response, 'parts'):
-            for part in response.parts:
-                if hasattr(part, 'inline_data') and part.inline_data:
-                    logging.info(f"[CreatePhoto] Found image with mime_type: {part.inline_data.mime_type}")
-                    image_data = part.inline_data.data
-                    
-                    caption_text = "🎨 Ваше изображение готово!"
-                    
-                    # Send as photo for quick preview (Telegram will compress)
-                    await context.bot.send_photo(
-                        chat_id=chat_id, 
-                        photo=io.BytesIO(image_data),
-                        caption=caption_text,
-                        parse_mode="Markdown"
-                    )
-                    
-                    # Send as document for full quality
-                    await context.bot.send_document(
-                        chat_id=chat_id,
-                        document=io.BytesIO(image_data),
-                        filename="generated_image.png",
-                        caption="📥 Изображение в оригинальном качестве"
-                    )
-                    has_content = True
-                    
-                    # Deduct balance and log successful generation
-                    new_balance = deduct_balance(user_id, "create_photo")
-                    log_conversation(
-                        user_id, "create_photo", "bot_image_generated", prompt,
-                        image_count=len(images),
-                        tokens_used=TOKEN_COSTS["create_photo"],
-                        success=True
-                    )
-                    logging.info(f"[CreatePhoto] Deducted {TOKEN_COSTS['create_photo']} tokens from user {user_id}, new balance: {new_balance}")
-
-        # Check for text response
-        try:
-            if response.text:
-                await context.bot.send_message(chat_id=chat_id, text=response.text)
-                has_content = True
-                
-                # Deduct token for text response (if image wasn't already generated)
-                if not any(hasattr(part, 'inline_data') and part.inline_data for part in response.parts if hasattr(response, 'parts')):
-                    new_balance = update_user_balance(user_id, -1)
-                    log_conversation(
-                        user_id, "create_photo", "bot_text_response", prompt,
-                        image_count=len(images),
-                        tokens_used=1,
-                        success=True
-                    )
-                    logging.info(f"[CreatePhoto] Text response - Deducted 1 token from user {user_id}, new balance: {new_balance}")
-        except ValueError:
-            pass
-
-        if not has_content:
+        
+        if generated_count > 0:
+            # Deduct balance for successfully generated images
+            actual_cost = TOKEN_COSTS["create_photo"] * generated_count
+            new_balance = update_user_balance(user_id, -actual_cost)
+            
+            log_conversation(
+                user_id, "create_photo", "bot_image_generated", prompt,
+                image_count=generated_count,
+                tokens_used=actual_cost,
+                success=True
+            )
+            logging.info(f"[CreatePhoto] Generated {generated_count}/{target_image_count} images. Deducted {actual_cost} tokens, new balance: {new_balance}")
+            
+            # Summary message
+            if generated_count == target_image_count:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Готово! Создано {generated_count} вариант(ов).\n💰 Списано: {actual_cost} токенов"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Создано {generated_count} из {target_image_count} вариантов.\n💰 Списано: {actual_cost} токенов"
+                )
+        else:
             await context.bot.send_message(
                 chat_id=chat_id, 
-                text="❌ Не удалось сгенерировать изображение."
+                text="❌ Не удалось сгенерировать изображения."
             )
         
     except Exception as e:
@@ -430,3 +542,4 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             image_count=len(images),
             success=False
         )
+

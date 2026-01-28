@@ -40,10 +40,22 @@ def init_db():
             username TEXT,
             first_name TEXT,
             balance INTEGER DEFAULT 50,
+            image_count INTEGER DEFAULT 1,
+            has_seen_image_count_prompt INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    
+    # Migration: add new columns if they don't exist (for existing databases)
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN image_count INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN has_seen_image_count_prompt INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     
     # Conversations table (full logging)
     cursor.execute("""
@@ -168,6 +180,54 @@ def deduct_balance(telegram_user_id: int, feature: str) -> int:
     """
     cost = TOKEN_COSTS.get(feature, 0)
     return update_user_balance(telegram_user_id, -cost)
+
+
+def get_user_image_count(telegram_user_id: int) -> int:
+    """Get user's preferred image count setting (1, 2, or 4)."""
+    user = get_user(telegram_user_id)
+    if not user:
+        return 1
+    return user.get("image_count", 1)
+
+
+def set_user_image_count(telegram_user_id: int, count: int) -> None:
+    """Set user's preferred image count (1, 2, or 4)."""
+    if count not in (1, 2, 4):
+        raise ValueError("Image count must be 1, 2, or 4")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET image_count = ? WHERE telegram_user_id = ?",
+        (count, telegram_user_id)
+    )
+    conn.commit()
+    conn.close()
+    logging.info(f"[Database] Set image_count={count} for user {telegram_user_id}")
+
+
+def should_show_image_count_prompt(telegram_user_id: int) -> bool:
+    """
+    Check if user should see the one-time image count selection prompt.
+    Returns True if: user has NOT seen prompt yet AND balance was refilled (bought tokens).
+    """
+    user = get_user(telegram_user_id)
+    if not user:
+        return False
+    # Show prompt if not seen yet and they have more than default balance (bought tokens)
+    return user.get("has_seen_image_count_prompt", 0) == 0 and user.get("balance", 0) > DEFAULT_BALANCE
+
+
+def mark_image_count_prompt_seen(telegram_user_id: int) -> None:
+    """Mark that user has seen the image count selection prompt."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET has_seen_image_count_prompt = 1 WHERE telegram_user_id = ?",
+        (telegram_user_id,)
+    )
+    conn.commit()
+    conn.close()
+    logging.debug(f"[Database] Marked image_count_prompt seen for user {telegram_user_id}")
 
 
 # ==================== CONVERSATION LOGGING ====================
