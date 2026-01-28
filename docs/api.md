@@ -12,8 +12,8 @@ Internal API documentation for Nano Banana Bot modules.
 DB_PATH = Path(__file__).parent.parent / "bot_data.db"
 
 TOKEN_COSTS = {
-    "create_photo": 10,
-    "analyze_ctr": 5,
+    "create_photo": 25,
+    "analyze_ctr": 10,
 }
 
 DEFAULT_BALANCE = 50

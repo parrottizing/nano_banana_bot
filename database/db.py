@@ -13,8 +13,8 @@ DB_PATH = Path(__file__).parent.parent / "bot_data.db"
 
 # Token costs for operations
 TOKEN_COSTS = {
-    "create_photo": 10,
-    "analyze_ctr": 5,
+    "create_photo": 25,
+    "analyze_ctr": 10,
 }
 
 # Default balance for new users
