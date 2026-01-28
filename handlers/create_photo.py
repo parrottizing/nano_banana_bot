@@ -481,9 +481,9 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                 photo_media = [
                     InputMediaPhoto(
                         media=io.BytesIO(data),
-                        caption=f"🎨 Вариант {idx+1}" if idx == 0 else None
+                        caption="🎨 Ваше изображение готово!" if i == 0 else None
                     )
-                    for idx, data in generated_images
+                    for i, (idx, data) in enumerate(generated_images)
                 ]
                 await context.bot.send_media_group(chat_id=chat_id, media=photo_media)
                 
@@ -492,9 +492,9 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
                     InputMediaDocument(
                         media=io.BytesIO(data),
                         filename=f"image_{idx+1}.png",
-                        caption="📥 Оригинальное качество" if idx == 0 else None
+                        caption="📥 Изображение в оригинальном качестве" if i == 0 else None
                     )
-                    for idx, data in generated_images
+                    for i, (idx, data) in enumerate(generated_images)
                 ]
                 await context.bot.send_media_group(chat_id=chat_id, media=doc_media)
             
@@ -510,11 +510,7 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             )
             logging.info(f"[CreatePhoto] Generated {generated_count}/{target_image_count} images. Deducted {actual_cost} tokens")
             
-            # Summary message
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"✅ Готово! Создано {generated_count} вариант(ов).\n💰 Списано: {actual_cost} токенов"
-            )
+
         else:
             await context.bot.send_message(chat_id=chat_id, text="❌ Не удалось сгенерировать изображения.")
         
