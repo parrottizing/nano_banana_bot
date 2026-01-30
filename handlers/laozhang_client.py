@@ -14,9 +14,10 @@ from PIL import Image
 LAOZHANG_BASE_URL = "https://api.laozhang.ai/v1beta/models"
 
 # Default model names
+# Default model names
 IMAGE_MODEL = "gemini-3-pro-image-preview-2k"
 TEXT_MODEL = "gemini-3-flash-preview"
-CLASSIFIER_MODEL = "gemma-3-12b-it"
+CLASSIFIER_MODEL = "gemini-3-flash-preview"
 
 # Default image settings
 DEFAULT_ASPECT_RATIO = "3:4"  # Vertical for marketplace cards
@@ -26,12 +27,15 @@ DEFAULT_IMAGE_SIZE = "2K"
 REQUEST_TIMEOUT = 180  # seconds
 
 
-def _get_headers():
+def _get_headers(api_key: Optional[str] = None):
     """Get authorization headers for API requests."""
-    # Read API key at request time (not import time) to ensure dotenv is loaded
-    api_key = os.getenv("LAOZHANG_API_KEY")
+    # Use provided key or fallback to legacy key
     if not api_key:
-        logging.error("[LaoZhangClient] LAOZHANG_API_KEY not found in environment!")
+        api_key = os.getenv("LAOZHANG_API_KEY")
+        
+    if not api_key:
+        logging.error("[LaoZhangClient] API Key not found in environment!")
+        
     return {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -93,11 +97,14 @@ async def generate_image(
         }
     }
     
+    # Use Per-Request key for images (as directed by user)
+    api_key = os.getenv("LAOZHANG_PER_REQUEST_API_KEY") or os.getenv("LAOZHANG_API_KEY")
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                headers=_get_headers(),
+                headers=_get_headers(api_key),
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
             ) as response:
@@ -173,11 +180,14 @@ async def generate_text(
     if max_output_tokens is not None:
         payload["generationConfig"]["maxOutputTokens"] = max_output_tokens
     
+    # Use Per-Use key for text (as directed by user)
+    api_key = os.getenv("LAOZHANG_PER_USE_API_KEY") or os.getenv("LAOZHANG_API_KEY")
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                headers=_get_headers(),
+                headers=_get_headers(api_key),
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
             ) as response:
