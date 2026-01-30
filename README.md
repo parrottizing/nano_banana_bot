@@ -4,7 +4,7 @@ A powerful Telegram bot for AI-powered image generation and CTR (Click-Through R
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-latest-blue.svg)
-![Google AI](https://img.shields.io/badge/Google%20AI-Gemini%203-orange.svg)
+![LaoZhang AI](https://img.shields.io/badge/LaoZhang%20AI-Gemini%203-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 ---
@@ -12,9 +12,10 @@ A powerful Telegram bot for AI-powered image generation and CTR (Click-Through R
 ## ✨ Features
 
 ### 🎨 Image Generation
-- Generate product images using **Gemini 3 Pro Image Preview**
+- Generate product images using **[Gemini 3 Pro Image Preview](https://docs.laozhang.ai/en/api-capabilities/nano-banana-pro-image)** (via LaoZhang API)
+- **Parallel Generation**: Create 1, 2, or 4 images simultaneously
 - Support for text-only prompts or image + text combinations
-- Upload up to 5 reference images (max 7MB each)
+- Upload reference images as context for generation
 - Automatic CTR optimization when marketplace-related intent is detected
 - Animated loading indicators during processing
 
@@ -25,7 +26,7 @@ A powerful Telegram bot for AI-powered image generation and CTR (Click-Through R
 - One-click CTR improvement using AI-generated optimized images
 
 ### 🎯 Smart Intent Detection
-- Uses **Gemma 3 12B** classifier to detect user intent
+- Uses **Gemini 3 Flash Preview** classifier to detect user intent
 - Automatically applies CTR optimization prompts when relevant
 - Contextual prompt enhancement based on best practices
 
@@ -33,6 +34,7 @@ A powerful Telegram bot for AI-powered image generation and CTR (Click-Through R
 - Built-in balance system for fair usage
 - New users receive **50 free tokens**
 - Transparent token costs per operation
+- **Buy Tokens**: Integrated menu for purchasing token packages
 - Balance tracking and display
 
 ---
@@ -41,7 +43,7 @@ A powerful Telegram bot for AI-powered image generation and CTR (Click-Through R
 
 - Python 3.10+
 - Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
-- Google AI API Key (for Gemini access)
+- LaoZhang API Key (for Gemini access)
 
 ---
 
@@ -66,7 +68,7 @@ Create a `.env` file in the project root:
 
 ```env
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-GOOGLE_API_KEY=your_google_ai_api_key_here
+LAOZHANG_API_KEY=your_laozhang_api_key_here
 ```
 
 ### 4. Run the Bot
@@ -94,7 +96,7 @@ You should see: `Bot is running...`
 When you start the bot, you'll see an interactive menu with buttons:
 - **🎨 Создать фото** — Generate or edit images
 - **📊 Анализ CTR** — Analyze product cards
-- **💰 Баланс** — Check token balance
+- **💰 Баланс** — Check token balance and buy tokens
 - **🆘 Поддержка** — Contact support
 
 ---
@@ -103,9 +105,13 @@ When you start the bot, you'll see an interactive menu with buttons:
 
 | Operation | Token Cost |
 |-----------|------------|
-| Image Generation | 10 tokens |
-| CTR Analysis | 5 tokens |
-| Text-only Response (fallback) | 1 token |
+| Image Generation | 25 tokens (per image) |
+| CTR Analysis | 10 tokens |
+
+**Image Generation Options:**
+- 1 Image: 25 tokens
+- 2 Images: 50 tokens
+- 4 Images: 100 tokens
 
 New users start with **50 tokens**.
 
@@ -126,7 +132,8 @@ nano_banana_bot/
 │   ├── create_photo.py   # Image generation handler
 │   ├── analyze_ctr.py    # CTR analysis handler
 │   ├── improve_ctr.py    # CTR improvement handler
-│   └── prompt_classifier.py  # Intent classification with Gemma 3
+│   ├── prompt_classifier.py  # Intent classification
+│   └── laozhang_client.py    # API client for LaoZhang/Gemini
 │
 ├── database/             # Database layer
 │   ├── __init__.py       # Package exports
@@ -157,7 +164,7 @@ nano_banana_bot/
                     ┌─────────────────────────────┼─────────────────────────────┐
                     ▼                             ▼                             ▼
            ┌────────────────┐          ┌──────────────────┐          ┌──────────────────┐
-           │   Database     │          │  Gemini 3 Pro    │          │   Gemma 3 12B    │
+           │   Database     │          │  Gemini 3 Pro    │          │  Gemini 3 Flash  │
            │   (SQLite)     │          │ (image gen)      │          │  (classifier)    │
            └────────────────┘          └──────────────────┘          └──────────────────┘
 ```
@@ -167,44 +174,9 @@ nano_banana_bot/
 1. **User Input** → Telegram sends update to bot
 2. **Routing** → `bot.py` routes to appropriate handler based on command/state
 3. **State Check** → Handler checks user state in database
-4. **Processing** → Handler uses AI models (Gemini/Gemma) for generation/analysis
+4. **Processing** → Handler uses LaoZhang API (Gemini models) for generation/analysis
 5. **Response** → Results sent back to user via Telegram API
 6. **Logging** → Conversation logged to database
-
-### Database Schema
-
-**users** — User accounts and balances
-| Column | Type | Description |
-|--------|------|-------------|
-| telegram_user_id | INTEGER | Primary key, Telegram user ID |
-| username | TEXT | Telegram username |
-| first_name | TEXT | User's first name |
-| balance | INTEGER | Token balance (default: 50) |
-| created_at | TIMESTAMP | Account creation time |
-| last_active | TIMESTAMP | Last activity time |
-
-**conversations** — Conversation history
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER | Auto-increment ID |
-| telegram_user_id | INTEGER | Foreign key to users |
-| timestamp | TIMESTAMP | Message timestamp |
-| feature | TEXT | Feature used (create_photo, analyze_ctr) |
-| message_type | TEXT | Type (user_text, user_image, bot_response, etc.) |
-| content | TEXT | Message content |
-| image_count | INTEGER | Number of images |
-| tokens_used | INTEGER | Tokens consumed |
-| success | INTEGER | Success flag (0/1) |
-| metadata | TEXT | JSON metadata |
-
-**user_states** — Current user state for multi-step interactions
-| Column | Type | Description |
-|--------|------|-------------|
-| telegram_user_id | INTEGER | Primary key, Telegram user ID |
-| feature | TEXT | Active feature |
-| state | TEXT | Current state (e.g., awaiting_photo_input) |
-| state_data | TEXT | JSON state data |
-| updated_at | TIMESTAMP | Last update time |
 
 ---
 
@@ -231,7 +203,7 @@ The tests cover:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | ✅ Yes | Your Telegram bot token from @BotFather |
-| `GOOGLE_API_KEY` | ✅ Yes | Google AI API key for Gemini access |
+| `LAOZHANG_API_KEY` | ✅ Yes | LaoZhang API key for Gemini access |
 
 ### Customization
 
@@ -243,7 +215,7 @@ Edit in `database/db.py`:
 - `DEFAULT_BALANCE` — Change starting balance for new users
 
 Edit in `handlers/create_photo.py`:
-- `MAX_IMAGES` — Maximum images per generation request (default: 5)
+- `MAX_IMAGES` — Maximum images allowed in memory (default: 5)
 - `MAX_IMAGE_SIZE_MB` — Maximum image size in MB (default: 7)
 - `CTR_ENHANCEMENT_PROMPT` — The CTR optimization prompt template
 

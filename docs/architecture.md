@@ -28,9 +28,9 @@ flowchart TB
         end
     end
 
-    subgraph GoogleAI["🧠 Google AI"]
+    subgraph LaoZhang["🧠 LaoZhang API"]
         Gemini[Gemini 3 Pro<br/>Image Generation]
-        Gemma[Gemma 3 12B<br/>Classification]
+        ClassifierModel[Gemini 3 Flash<br/>Classification]
     end
 
     User <-->|Telegram API| Main
@@ -47,7 +47,7 @@ flowchart TB
     
     ImproveCTR --> CreatePhoto
     
-    Classifier --> Gemma
+    Classifier --> ClassifierModel
     
     DB --> SQLite
 ```
@@ -73,6 +73,7 @@ The central orchestrator that:
 | `handle_photo()` | Route photo messages based on user state |
 | `show_balance()` | Display user's token balance |
 | `support()` | Show support contact information |
+| `show_buy_tokens_menu()` | Display token purchase options |
 
 ### 2. Handlers Module
 
@@ -80,7 +81,8 @@ The central orchestrator that:
 Handles AI image generation with these capabilities:
 - Text-only image generation
 - Image + text editing/generation
-- Multi-image input support (up to 5 images)
+- **Parallel processing** (1, 2, or 4 images)
+- Multi-image input support
 - Automatic CTR enhancement when detected
 - Animated loading indicators
 
@@ -90,7 +92,7 @@ sequenceDiagram
     participant U as User
     participant H as create_photo
     participant C as Classifier
-    participant G as Gemini
+    participant G as LaoZhang API
     participant DB as Database
 
     U->>H: /create_photo
@@ -106,12 +108,12 @@ sequenceDiagram
         H->>H: Enhance prompt with CTR tips
     end
     
-    H->>G: generate_content()
-    G-->>H: Generated image
+    H->>G: generate_content() (Parallel)
+    G-->>H: Generated images
     
     H->>DB: Deduct tokens
     H->>DB: Log conversation
-    H-->>U: Send image
+    H-->>U: Send images (Media Group)
 ```
 
 #### `analyze_ctr.py`
@@ -137,7 +139,7 @@ Bridges analysis and generation:
 
 #### `prompt_classifier.py`
 Lightweight intent classification:
-- Uses Gemma 3 12B (text-only model)
+- Uses **Gemini 3 Flash Preview** (via LaoZhang, text-only)
 - Zero temperature for consistent results
 - Determines if user wants CTR optimization
 - Runs only when images are provided
@@ -158,6 +160,8 @@ erDiagram
         TEXT username
         TEXT first_name
         INTEGER balance
+        INTEGER image_count
+        INTEGER has_seen_image_count_prompt
         TIMESTAMP created_at
         TIMESTAMP last_active
     }
@@ -192,6 +196,8 @@ erDiagram
 - `update_user_balance()` — Modify balance
 - `check_balance()` — Verify sufficient funds
 - `deduct_balance()` — Subtract tokens for operation
+- `get_user_image_count()` — Get image count preference
+- `set_user_image_count()` — Set image count preference
 
 **State Management:**
 - `get_user_state()` — Get current user state
@@ -205,7 +211,7 @@ erDiagram
 
 ## AI Models
 
-### Gemini 3 Pro Image Preview
+### [Gemini 3 Pro Image Preview (via LaoZhang)](https://docs.laozhang.ai/en/api-capabilities/nano-banana-pro-image)
 - **Purpose:** Image generation and editing
 - **Model ID:** `gemini-3-pro-image-preview`
 - **Capabilities:**
@@ -214,11 +220,11 @@ erDiagram
   - Multi-image composition
   - High-resolution output
 
-### Gemma 3 12B
-- **Purpose:** Intent classification
-- **Model ID:** `gemma-3-12b-it`
+### Gemini 3 Flash Preview (via LaoZhang)
+- **Purpose:** Intent classification & text analysis
+- **Model ID:** `gemini-3-flash-preview`
 - **Configuration:**
-  - Temperature: 0 (deterministic)
+  - Temperature: 0 (deterministic) for classification
   - Max tokens: 10
 - **Use Case:** Quick yes/no classification for CTR intent
 

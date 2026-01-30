@@ -61,6 +61,8 @@ user = get_or_create_user(
 #     "username": "john_doe",
 #     "first_name": "John",
 #     "balance": 50,
+#     "image_count": 1,
+#     "has_seen_image_count_prompt": 0,
 #     "created_at": "2024-01-01 12:00:00",
 #     "last_active": "2024-01-01 12:00:00"
 # }
@@ -109,6 +111,25 @@ Deduct tokens for a specific feature.
 ```python
 new_balance = deduct_balance(12345, "create_photo")
 # Returns: int (new balance after deduction)
+```
+
+---
+
+#### `get_user_image_count(telegram_user_id)`
+Get user's preferred image count setting (1, 2, or 4).
+
+```python
+count = get_user_image_count(12345)
+# Returns: int (default 1)
+```
+
+---
+
+#### `set_user_image_count(telegram_user_id, count)`
+Set user's preferred image count.
+
+```python
+set_user_image_count(12345, 2)
 ```
 
 ---
@@ -216,8 +237,8 @@ await create_photo_handler(update, context)
 
 **Behavior:**
 1. Sets user state to `create_photo / awaiting_photo_input`
-2. Logs button click
-3. Displays prompt with balance info
+2. Checks if user should see image count selection prompt
+3. Displays prompt with balance info and current image count
 
 ---
 
@@ -346,7 +367,7 @@ await start_ctr_improvement(update, context)
 1. Retrieves stored analysis data from user state
 2. Downloads original image
 3. Builds improvement prompt from recommendations
-4. Triggers image generation with optimizations
+4. Triggers image generation with optimizations (respects user's image count setting)
 
 ---
 
@@ -367,7 +388,7 @@ Extracts only the "💡 КОНКРЕТНЫЕ РЕКОМЕНДАЦИИ" section.
 #### Constants
 
 ```python
-CLASSIFIER_MODEL = "gemma-3-12b-it"
+CLASSIFIER_MODEL = "gemini-3-flash-preview"
 CLASSIFICATION_TEMPERATURE = 0  # Deterministic
 ```
 
@@ -422,7 +443,8 @@ Route inline button callbacks.
 | `analyze_ctr` | → `analyze_ctr_handler()` |
 | `improve_ctr` | → `start_ctr_improvement()` |
 | `balance` | → `show_balance()` |
-| `buy_tokens` | Shows "coming soon" alert |
+| `buy_tokens` | → `show_buy_tokens_menu()` |
+| `set_image_count_X` | → `handle_image_count_selection()` |
 | `support` | → `support()` |
 | `main_menu` | → `start()` |
 
