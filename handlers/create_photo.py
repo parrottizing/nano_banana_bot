@@ -8,7 +8,7 @@ import asyncio
 from PIL import Image
 from telegram import Update
 from telegram.ext import ContextTypes
-import google.generativeai as genai
+from .laozhang_client import generate_image as laozhang_generate_image
 from .prompt_classifier import analyze_user_intent
 from database import (
     get_user_state, set_user_state, clear_user_state,
@@ -19,7 +19,7 @@ from database import (
 )
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-MODEL_NAME = "gemini-3-pro-image-preview"
+# Model is now configured in laozhang_client.py
 MAX_IMAGES = 5
 MAX_IMAGE_SIZE_MB = 7
 
@@ -505,16 +505,19 @@ async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return True
 
-async def _generate_single_image(model, content, index: int) -> tuple[int, bytes | None]:
+async def _generate_single_image(prompt: str, images: list, index: int):
     """
-    Generate a single image. Returns (index, image_data) or (index, None) on failure.
+    Generate a single image using LaoZhang API. Returns (index, image_data) or (index, None) on failure.
     """
     try:
-        response = await model.generate_content_async(content)
-        if hasattr(response, 'parts'):
-            for part in response.parts:
-                if hasattr(part, 'inline_data') and part.inline_data:
-                    return (index, part.inline_data.data)
+        image_data = await laozhang_generate_image(
+            prompt=prompt,
+            images=images if images else None,
+            aspect_ratio="3:4",  # Vertical for marketplace cards
+            image_size="2K"
+        )
+        if image_data:
+            return (index, image_data)
     except Exception as e:
         logging.error(f"[CreatePhoto] Error generating image {index+1}: {e}")
     return (index, None)
@@ -555,17 +558,10 @@ async def _process_image_generation(update: Update, context: ContextTypes.DEFAUL
             enhanced_prompt += CTR_ENHANCEMENT_PROMPT
             logging.info("[CreatePhoto] Added CTR optimization enhancement")
         
-        model = genai.GenerativeModel(MODEL_NAME)
         logging.info(f"[CreatePhoto] Generating {target_image_count} images in parallel")
         
-        # Build the content for multimodal input
-        if images:
-            content = images + [enhanced_prompt]
-        else:
-            content = enhanced_prompt
-        
-        # Generate all images in parallel
-        tasks = [_generate_single_image(model, content, i) for i in range(target_image_count)]
+        # Generate all images in parallel using LaoZhang API
+        tasks = [_generate_single_image(enhanced_prompt, images, i) for i in range(target_image_count)]
         results = await asyncio.gather(*tasks)
         
         # Collect successful images (preserving order)

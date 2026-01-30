@@ -3,7 +3,6 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
-import google.generativeai as genai
 
 # Import handlers
 from handlers import create_photo_handler, handle_photo_prompt, handle_create_photo_image
@@ -23,15 +22,11 @@ logging.basicConfig(
 )
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+LAOZHANG_API_KEY = os.getenv("LAOZHANG_API_KEY")
 
-# Configure Google GenAI
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-else:
-    logging.warning("GOOGLE_API_KEY not found in environment variables.")
-
-MODEL_NAME = "gemini-3-pro-image-preview"
+# Validate API key
+if not LAOZHANG_API_KEY:
+    logging.warning("LAOZHANG_API_KEY not found in environment variables.")
 
 SUPPORT_USERNAME = "your_tech_support"  # Support contact username (without @)
 

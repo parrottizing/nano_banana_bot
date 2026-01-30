@@ -3,9 +3,8 @@ Prompt classifier using Gemma 3 12B for analyzing user intent and image content.
 Uses lightweight multimodal model for quick classification tasks before main processing.
 """
 import logging
-import google.generativeai as genai
+from .laozhang_client import generate_text as laozhang_generate_text, CLASSIFIER_MODEL
 
-CLASSIFIER_MODEL = "gemma-3-12b-it"
 CLASSIFICATION_TEMPERATURE = 0  # Zero temperature for consistent yes/no answers
 
 
@@ -38,9 +37,7 @@ async def analyze_user_intent(prompt: str, images: list = None) -> dict:
         }
     
     try:
-        model = genai.GenerativeModel(CLASSIFIER_MODEL)
-        
-        # 1. Check CTR improvement intent (text-only)
+        # Check CTR improvement intent (text-only)
         ctr_prompt = f"""Analyze the following user request and determine if the user wants to improve CTR (Click-Through Rate) for their product, advertisement, or marketplace listing.
 
 User request: "{prompt}"
@@ -51,15 +48,21 @@ Answer with ONLY "yes" or "no".
 
 Answer:"""
 
-        ctr_response = await model.generate_content_async(
-            ctr_prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=CLASSIFICATION_TEMPERATURE,
-                max_output_tokens=10
-            )
+        ctr_answer = await laozhang_generate_text(
+            prompt=ctr_prompt,
+            model=CLASSIFIER_MODEL,
+            temperature=CLASSIFICATION_TEMPERATURE,
+            max_output_tokens=10
         )
         
-        ctr_answer = ctr_response.text.strip().lower()
+        if not ctr_answer:
+            logging.error("[PromptClassifier] No response from classifier")
+            return {
+                "wants_ctr_improvement": False,
+                "raw_ctr_response": "error: no response"
+            }
+        
+        ctr_answer = ctr_answer.strip().lower()
         wants_ctr = ctr_answer.startswith("yes")
         
         logging.info(f"[PromptClassifier] CTR intent: {ctr_answer}")

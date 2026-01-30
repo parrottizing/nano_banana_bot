@@ -1,0 +1,2 @@
+MODEL=gemini-3-pro-image-preview-2k
+ENDPOINT=native

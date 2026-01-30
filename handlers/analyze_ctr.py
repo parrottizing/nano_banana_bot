@@ -7,7 +7,7 @@ import io
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-import google.generativeai as genai
+from .laozhang_client import generate_text as laozhang_generate_text, TEXT_MODEL
 from PIL import Image
 from telegram.error import BadRequest
 from database import (
@@ -16,7 +16,7 @@ from database import (
     TOKEN_COSTS
 )
 
-MODEL_NAME = "gemini-3-flash-preview"
+# Model is now configured in laozhang_client.py
 
 # Animation configuration
 CTR_LOADING_EMOJIS = ["🔍", "✍️", "📝"]
@@ -209,15 +209,18 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
         
-        # Open as PIL Image for Gemini
+        # Open as PIL Image for API
         image = Image.open(io.BytesIO(photo_bytes))
         
-        model = genai.GenerativeModel(MODEL_NAME)
-        
+
         logging.info(f"[AnalyzeCTR] Analyzing product card image for user {user_id}")
         
-        # Send image + prompt to Gemini
-        response = await model.generate_content_async([CTR_ANALYSIS_PROMPT, image])
+        # Send image + prompt to LaoZhang API
+        response_text = await laozhang_generate_text(
+            prompt=CTR_ANALYSIS_PROMPT,
+            images=[image],
+            model=TEXT_MODEL
+        )
         
         # Stop animation before sending results
         animation_task.cancel()
@@ -226,14 +229,14 @@ async def handle_ctr_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except asyncio.CancelledError:
             pass
         
-        if response.text:
+        if response_text:
             # Split long messages if needed (Telegram limit is 4096 chars)
-            result_text = f"📊 *Результат анализа CTR:*\n\n{response.text}"
+            result_text = f"📊 *Результат анализа CTR:*\n\n{response_text}"
             
             # Store image file_id and recommendations for potential improvement
             set_user_state(user_id, "ctr_improvement", "ready_to_improve", {
                 "image_file_id": photo.file_id,
-                "recommendations": response.text
+                "recommendations": response_text
             })
             
             # Create improvement button

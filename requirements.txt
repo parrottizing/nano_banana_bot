@@ -1,6 +1,7 @@
 python-telegram-bot
 google-generativeai
 python-dotenv
+aiohttp
 Pillow
 pytest
 pytest-asyncio
