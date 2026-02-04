@@ -16,4 +16,5 @@ from .db import (
     set_user_image_count,
     should_show_image_count_prompt,
     mark_image_count_prompt_seen,
+    apply_successful_payment,
 )

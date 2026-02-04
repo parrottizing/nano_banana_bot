@@ -1,8 +1,10 @@
 import os
 import logging
+import uuid
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, LabeledPrice
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, PreCheckoutQueryHandler
 
 # Import handlers
 from handlers import create_photo_handler, handle_photo_prompt, handle_create_photo_image
@@ -11,7 +13,14 @@ from handlers import start_ctr_improvement
 from handlers import handle_image_count_selection, show_change_image_count_menu
 
 # Import database
-from database import init_db, get_or_create_user, log_conversation, clear_user_state, TOKEN_COSTS
+from database import (
+    init_db,
+    get_or_create_user,
+    log_conversation,
+    clear_user_state,
+    TOKEN_COSTS,
+    apply_successful_payment,
+)
 
 load_dotenv()
 
@@ -30,6 +39,33 @@ if not LAOZHANG_API_KEY:
 
 SUPPORT_USERNAME = "your_tech_support"  # Support contact username (without @)
 
+# Payments (YooKassa via Telegram Payments)
+PAYMENTS_MODE = os.getenv("PAYMENTS_MODE", "test").lower()
+YOOKASSA_PROVIDER_TOKEN_TEST = os.getenv("YOOKASSA_PROVIDER_TOKEN_TEST")
+YOOKASSA_PROVIDER_TOKEN_LIVE = os.getenv("YOOKASSA_PROVIDER_TOKEN_LIVE")
+
+PAYMENT_TITLE = "Пополнение баланса"
+PAYMENT_DESCRIPTION = "Пополнение баланса для генерации и редактирования изображений."
+PAYMENT_LABEL = "К оплате"
+PAYMENT_CURRENCY = "RUB"
+PAYMENT_START_PARAMETER = "balance_topup"
+
+PAYMENT_PACKAGES = {
+    "100": {"rub": 100, "balance": 100},
+    "300": {"rub": 300, "balance": 325},
+    "1000": {"rub": 1000, "balance": 1100},
+    "3000": {"rub": 3000, "balance": 3500},
+    "5000": {"rub": 5000, "balance": 6000},
+}
+
+CALLBACK_TO_PACKAGE_ID = {
+    "buy_100": "100",
+    "buy_300": "300",
+    "buy_1000": "1000",
+    "buy_3000": "3000",
+    "buy_5000": "5000",
+}
+
 async def setup_bot_commands(application):
     """Set up bot menu button commands"""
     commands = [
@@ -40,6 +76,176 @@ async def setup_bot_commands(application):
         BotCommand("support", "🆘 Поддержка"),
     ]
     await application.bot.set_my_commands(commands)
+
+
+def _get_provider_token() -> Optional[str]:
+    if PAYMENTS_MODE == "live":
+        return YOOKASSA_PROVIDER_TOKEN_LIVE or YOOKASSA_PROVIDER_TOKEN_TEST
+    return YOOKASSA_PROVIDER_TOKEN_TEST or YOOKASSA_PROVIDER_TOKEN_LIVE
+
+
+def _build_payment_payload(package_id: str, user_id: int) -> str:
+    return f"{PAYMENT_START_PARAMETER}:{package_id}:{user_id}:{uuid.uuid4().hex}"
+
+
+def _parse_payment_payload(payload: str) -> Optional[Dict[str, Any]]:
+    parts = payload.split(":")
+    if len(parts) != 4:
+        return None
+    if parts[0] != PAYMENT_START_PARAMETER:
+        return None
+    try:
+        user_id = int(parts[2])
+    except ValueError:
+        return None
+    return {"package_id": parts[1], "user_id": user_id, "nonce": parts[3]}
+
+
+def _get_package_id_by_amount(amount_kopecks: int) -> Optional[str]:
+    for package_id, package in PAYMENT_PACKAGES.items():
+        if package["rub"] * 100 == amount_kopecks:
+            return package_id
+    return None
+
+
+async def send_balance_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, package_id: str) -> None:
+    provider_token = _get_provider_token()
+    if not provider_token:
+        logging.error("Provider token is missing. Set YOOKASSA_PROVIDER_TOKEN_TEST/LIVE.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Оплата временно недоступна. Напишите в поддержку."
+        )
+        return
+
+    package = PAYMENT_PACKAGES.get(package_id)
+    if not package:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Не удалось найти пакет для оплаты. Напишите в поддержку."
+        )
+        return
+
+    payload = _build_payment_payload(package_id, update.effective_user.id)
+    prices = [LabeledPrice(PAYMENT_LABEL, package["rub"] * 100)]
+
+    await context.bot.send_invoice(
+        chat_id=update.effective_chat.id,
+        title=PAYMENT_TITLE,
+        description=PAYMENT_DESCRIPTION,
+        payload=payload,
+        provider_token=provider_token,
+        currency=PAYMENT_CURRENCY,
+        prices=prices,
+        start_parameter=PAYMENT_START_PARAMETER
+    )
+
+
+async def handle_precheckout_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.pre_checkout_query
+    payload_data = _parse_payment_payload(query.invoice_payload)
+
+    if not payload_data or payload_data["user_id"] != query.from_user.id:
+        await query.answer(
+            ok=False,
+            error_message="Неверные параметры платежа. Попробуйте ещё раз или обратитесь в поддержку."
+        )
+        return
+
+    package = PAYMENT_PACKAGES.get(payload_data["package_id"])
+    if not package:
+        await query.answer(
+            ok=False,
+            error_message="Пакет оплаты не найден. Попробуйте ещё раз или обратитесь в поддержку."
+        )
+        return
+
+    expected_amount = package["rub"] * 100
+    if query.currency != PAYMENT_CURRENCY or query.total_amount != expected_amount:
+        await query.answer(
+            ok=False,
+            error_message="Сумма платежа не совпадает. Попробуйте ещё раз."
+        )
+        return
+
+    await query.answer(ok=True)
+
+
+async def handle_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    payment = message.successful_payment
+    user = update.effective_user
+
+    payload_data = _parse_payment_payload(payment.invoice_payload)
+    package_id = None
+    if payload_data and payload_data.get("package_id") in PAYMENT_PACKAGES:
+        package_id = payload_data["package_id"]
+    else:
+        package_id = _get_package_id_by_amount(payment.total_amount)
+
+    get_or_create_user(user.id, user.username, user.first_name)
+
+    if not package_id:
+        new_balance = apply_successful_payment(
+            telegram_user_id=user.id,
+            provider_payment_charge_id=payment.provider_payment_charge_id,
+            telegram_payment_charge_id=payment.telegram_payment_charge_id,
+            payload=payment.invoice_payload,
+            currency=payment.currency,
+            amount=payment.total_amount,
+            balance_added=0,
+            status="paid_unmapped"
+        )
+        await message.reply_text(
+            "✅ Платёж получен, но не удалось определить пакет пополнения. Напишите в поддержку."
+        )
+        if new_balance is not None:
+            log_conversation(
+                user.id,
+                "payment",
+                "successful_payment",
+                content="unmapped",
+                metadata={
+                    "provider_payment_charge_id": payment.provider_payment_charge_id,
+                    "telegram_payment_charge_id": payment.telegram_payment_charge_id,
+                    "total_amount": payment.total_amount,
+                    "currency": payment.currency,
+                }
+            )
+        return
+
+    balance_added = PAYMENT_PACKAGES[package_id]["balance"]
+    new_balance = apply_successful_payment(
+        telegram_user_id=user.id,
+        provider_payment_charge_id=payment.provider_payment_charge_id,
+        telegram_payment_charge_id=payment.telegram_payment_charge_id,
+        payload=payment.invoice_payload,
+        currency=payment.currency,
+        amount=payment.total_amount,
+        balance_added=balance_added,
+        status="paid"
+    )
+
+    if new_balance is None:
+        await message.reply_text("✅ Платёж уже обработан. Баланс не изменён.")
+        return
+
+    await message.reply_text(
+        f"✅ Баланс пополнен на {balance_added}. Текущий баланс: {new_balance}."
+    )
+    log_conversation(
+        user.id,
+        "payment",
+        "successful_payment",
+        content=f"package={package_id}",
+        metadata={
+            "provider_payment_charge_id": payment.provider_payment_charge_id,
+            "telegram_payment_charge_id": payment.telegram_payment_charge_id,
+            "total_amount": payment.total_amount,
+            "currency": payment.currency,
+            "balance_added": balance_added,
+        }
+    )
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /support command - redirect to support contact"""
@@ -182,8 +388,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         await show_buy_tokens_menu(update, context)
     elif query.data.startswith("buy_"):
-        # Handle token purchase buttons (functionality to be added later)
-        await query.answer("🚧 Оплата скоро будет доступна!", show_alert=True)
+        await query.answer()
+        package_id = CALLBACK_TO_PACKAGE_ID.get(query.data)
+        if not package_id:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ Не удалось определить пакет для оплаты. Напишите в поддержку."
+            )
+            return
+        await send_balance_invoice(update, context, package_id)
     elif query.data == "support":
         await query.answer()
         await support(update, context)
@@ -240,6 +453,8 @@ if __name__ == '__main__':
     create_photo_cmd_handler = CommandHandler('create_photo', lambda update, context: create_photo_handler(update, context))
     analyze_ctr_cmd_handler = CommandHandler('analyze_ctr', lambda update, context: analyze_ctr_handler(update, context))
     callback_handler = CallbackQueryHandler(button_callback)
+    precheckout_handler = PreCheckoutQueryHandler(handle_precheckout_query)
+    successful_payment_handler = MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment)
     message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     photo_handler = MessageHandler(filters.PHOTO, handle_photo)
     
@@ -249,6 +464,8 @@ if __name__ == '__main__':
     application.add_handler(create_photo_cmd_handler)
     application.add_handler(analyze_ctr_cmd_handler)
     application.add_handler(callback_handler)
+    application.add_handler(precheckout_handler)
+    application.add_handler(successful_payment_handler)
     application.add_handler(message_handler)
     application.add_handler(photo_handler)
     

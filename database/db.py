@@ -85,6 +85,23 @@ def init_db():
             FOREIGN KEY (telegram_user_id) REFERENCES users(telegram_user_id)
         )
     """)
+
+    # Payments table (Telegram Payments / YooKassa)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id INTEGER NOT NULL,
+            provider_payment_charge_id TEXT UNIQUE,
+            telegram_payment_charge_id TEXT UNIQUE,
+            payload TEXT,
+            currency TEXT,
+            amount INTEGER,
+            balance_added INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'paid',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (telegram_user_id) REFERENCES users(telegram_user_id)
+        )
+    """)
     
     conn.commit()
     conn.close()
@@ -340,3 +357,63 @@ def clear_user_state(telegram_user_id: int):
     conn.commit()
     conn.close()
     logging.debug(f"[Database] Cleared state for user {telegram_user_id}")
+
+
+# ==================== PAYMENTS ====================
+
+def apply_successful_payment(
+    telegram_user_id: int,
+    provider_payment_charge_id: str,
+    telegram_payment_charge_id: str,
+    payload: str,
+    currency: str,
+    amount: int,
+    balance_added: int,
+    status: str = "paid",
+) -> Optional[int]:
+    """
+    Atomically record a successful payment and credit user balance.
+    Returns new balance if applied, or None if payment already exists.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO payments (
+                telegram_user_id,
+                provider_payment_charge_id,
+                telegram_payment_charge_id,
+                payload,
+                currency,
+                amount,
+                balance_added,
+                status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            telegram_user_id,
+            provider_payment_charge_id,
+            telegram_payment_charge_id,
+            payload,
+            currency,
+            amount,
+            balance_added,
+            status
+        ))
+    except sqlite3.IntegrityError:
+        conn.close()
+        return None
+
+    cursor.execute("""
+        UPDATE users
+        SET balance = balance + ?
+        WHERE telegram_user_id = ?
+    """, (balance_added, telegram_user_id))
+
+    cursor.execute("SELECT balance FROM users WHERE telegram_user_id = ?", (telegram_user_id,))
+    row = cursor.fetchone()
+    conn.commit()
+    conn.close()
+
+    return row["balance"] if row else None
