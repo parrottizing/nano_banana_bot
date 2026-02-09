@@ -29,12 +29,11 @@ REQUEST_TIMEOUT = 180  # seconds
 
 def _get_headers(api_key: Optional[str] = None):
     """Get authorization headers for API requests."""
-    # Use provided key or fallback to legacy key
     if not api_key:
-        api_key = os.getenv("LAOZHANG_API_KEY")
-        
-    if not api_key:
-        logging.error("[LaoZhangClient] API Key not found in environment!")
+        logging.error(
+            "[LaoZhangClient] API key not found. Set LAOZHANG_PER_REQUEST_API_KEY "
+            "and LAOZHANG_PER_USE_API_KEY."
+        )
         
     return {
         "Authorization": f"Bearer {api_key}",
@@ -97,8 +96,8 @@ async def generate_image(
         }
     }
     
-    # Use Per-Request key for images (as directed by user)
-    api_key = os.getenv("LAOZHANG_PER_REQUEST_API_KEY") or os.getenv("LAOZHANG_API_KEY")
+    # Use Per-Request key for images
+    api_key = os.getenv("LAOZHANG_PER_REQUEST_API_KEY")
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -180,8 +179,8 @@ async def generate_text(
     if max_output_tokens is not None:
         payload["generationConfig"]["maxOutputTokens"] = max_output_tokens
     
-    # Use Per-Use key for text (as directed by user)
-    api_key = os.getenv("LAOZHANG_PER_USE_API_KEY") or os.getenv("LAOZHANG_API_KEY")
+    # Use Per-Use key for text
+    api_key = os.getenv("LAOZHANG_PER_USE_API_KEY")
 
     try:
         async with aiohttp.ClientSession() as session:

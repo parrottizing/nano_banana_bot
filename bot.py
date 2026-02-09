@@ -1,10 +1,12 @@
 import os
 import logging
 import uuid
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional, Dict, Any
+import aiohttp
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, LabeledPrice
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, PreCheckoutQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 # Import handlers
 from handlers import create_photo_handler, handle_photo_prompt, handle_create_photo_image
@@ -31,24 +33,32 @@ logging.basicConfig(
 )
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-LAOZHANG_API_KEY = os.getenv("LAOZHANG_API_KEY")
+LAOZHANG_PER_REQUEST_API_KEY = os.getenv("LAOZHANG_PER_REQUEST_API_KEY")
+LAOZHANG_PER_USE_API_KEY = os.getenv("LAOZHANG_PER_USE_API_KEY")
 
 # Validate API key
-if not LAOZHANG_API_KEY:
-    logging.warning("LAOZHANG_API_KEY not found in environment variables.")
+if not (LAOZHANG_PER_REQUEST_API_KEY or LAOZHANG_PER_USE_API_KEY):
+    logging.warning(
+        "LaoZhang API keys not found. Set LAOZHANG_PER_REQUEST_API_KEY and "
+        "LAOZHANG_PER_USE_API_KEY."
+    )
 
 SUPPORT_USERNAME = "your_tech_support"  # Support contact username (without @)
 
-# Payments (YooKassa via Telegram Payments)
-PAYMENTS_MODE = os.getenv("PAYMENTS_MODE", "test").lower()
-YOOKASSA_PROVIDER_TOKEN_TEST = os.getenv("YOOKASSA_PROVIDER_TOKEN_TEST")
-YOOKASSA_PROVIDER_TOKEN_LIVE = os.getenv("YOOKASSA_PROVIDER_TOKEN_LIVE")
+# Payments (YooKassa API, SBP only)
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
+YOOKASSA_API_BASE_URL = os.getenv("YOOKASSA_API_BASE_URL", "https://api.yookassa.ru/v3").rstrip("/")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME")
+YOOKASSA_RECEIPT_EMAIL = os.getenv("YOOKASSA_RECEIPT_EMAIL")
+YOOKASSA_RECEIPT_VAT_CODE = int(os.getenv("YOOKASSA_RECEIPT_VAT_CODE", "1"))
+YOOKASSA_RECEIPT_PAYMENT_MODE = os.getenv("YOOKASSA_RECEIPT_PAYMENT_MODE", "full_prepayment")
+YOOKASSA_RECEIPT_PAYMENT_SUBJECT = os.getenv("YOOKASSA_RECEIPT_PAYMENT_SUBJECT", "service")
 
 PAYMENT_TITLE = "Пополнение баланса"
-PAYMENT_DESCRIPTION = "Пополнение баланса для генерации и редактирования изображений."
-PAYMENT_LABEL = "К оплате"
 PAYMENT_CURRENCY = "RUB"
 PAYMENT_START_PARAMETER = "balance_topup"
+SBP_CHECK_CALLBACK_PREFIX = "check_sbp:"
 
 PAYMENT_PACKAGES = {
     "100": {"rub": 100, "balance": 100},
@@ -78,27 +88,8 @@ async def setup_bot_commands(application):
     await application.bot.set_my_commands(commands)
 
 
-def _get_provider_token() -> Optional[str]:
-    if PAYMENTS_MODE == "live":
-        return YOOKASSA_PROVIDER_TOKEN_LIVE or YOOKASSA_PROVIDER_TOKEN_TEST
-    return YOOKASSA_PROVIDER_TOKEN_TEST or YOOKASSA_PROVIDER_TOKEN_LIVE
-
-
 def _build_payment_payload(package_id: str, user_id: int) -> str:
     return f"{PAYMENT_START_PARAMETER}:{package_id}:{user_id}:{uuid.uuid4().hex}"
-
-
-def _parse_payment_payload(payload: str) -> Optional[Dict[str, Any]]:
-    parts = payload.split(":")
-    if len(parts) != 4:
-        return None
-    if parts[0] != PAYMENT_START_PARAMETER:
-        return None
-    try:
-        user_id = int(parts[2])
-    except ValueError:
-        return None
-    return {"package_id": parts[1], "user_id": user_id, "nonce": parts[3]}
 
 
 def _get_package_id_by_amount(amount_kopecks: int) -> Optional[str]:
@@ -108,10 +99,174 @@ def _get_package_id_by_amount(amount_kopecks: int) -> Optional[str]:
     return None
 
 
-async def send_balance_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, package_id: str) -> None:
-    provider_token = _get_provider_token()
-    if not provider_token:
-        logging.error("Provider token is missing. Set YOOKASSA_PROVIDER_TOKEN_TEST/LIVE.")
+def _has_yookassa_api_credentials() -> bool:
+    return bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY)
+
+
+def _build_receipt(package_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Build receipt payload for shops with YooKassa fiscalization enabled.
+    """
+    if not YOOKASSA_RECEIPT_EMAIL:
+        return None
+
+    package = PAYMENT_PACKAGES.get(package_id)
+    if not package:
+        return None
+
+    amount_value = f"{package['rub']:.2f}"
+    return {
+        "customer": {
+            "email": YOOKASSA_RECEIPT_EMAIL,
+        },
+        "items": [
+            {
+                "description": f"Пополнение баланса: {package['balance']} токенов",
+                "quantity": "1.00",
+                "amount": {
+                    "value": amount_value,
+                    "currency": PAYMENT_CURRENCY,
+                },
+                "vat_code": YOOKASSA_RECEIPT_VAT_CODE,
+                "payment_mode": YOOKASSA_RECEIPT_PAYMENT_MODE,
+                "payment_subject": YOOKASSA_RECEIPT_PAYMENT_SUBJECT,
+            }
+        ],
+    }
+
+
+def _amount_value_to_kopecks(amount_value: Any) -> Optional[int]:
+    try:
+        return int((Decimal(str(amount_value)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _get_sbp_return_url() -> str:
+    if TELEGRAM_BOT_USERNAME:
+        username = TELEGRAM_BOT_USERNAME.lstrip("@")
+        return f"https://t.me/{username}?start=sbp_return"
+    return "https://t.me"
+
+
+def _format_yookassa_error(data: Dict[str, Any]) -> str:
+    code = data.get("code")
+    parameter = data.get("parameter")
+    description = data.get("description") or "Неизвестная ошибка YooKassa"
+    if code == "invalid_request" and parameter == "receipt":
+        return (
+            "ошибка чека (receipt). Проверьте YOOKASSA_RECEIPT_EMAIL и настройки "
+            "чека (54-ФЗ) в YooKassa."
+        )
+    return f"{description} (code={code}, parameter={parameter})"
+
+
+async def _create_sbp_payment(package_id: str, user_id: int) -> Optional[Dict[str, Any]]:
+    package = PAYMENT_PACKAGES.get(package_id)
+    if not package or not _has_yookassa_api_credentials():
+        return None
+
+    receipt = _build_receipt(package_id)
+    if receipt is None:
+        logging.error(
+            "YooKassa receipt email is missing. Set YOOKASSA_RECEIPT_EMAIL for fiscalized payments."
+        )
+        return {
+            "error": (
+                "не задан YOOKASSA_RECEIPT_EMAIL. Для вашего магазина требуется "
+                "передавать данные чека (receipt)."
+            )
+        }
+
+    payload = {
+        "amount": {
+            "value": f"{package['rub']:.2f}",
+            "currency": PAYMENT_CURRENCY,
+        },
+        "capture": True,
+        "payment_method_data": {"type": "sbp"},
+        "confirmation": {
+            "type": "redirect",
+            "return_url": _get_sbp_return_url(),
+        },
+        "description": f"{PAYMENT_TITLE}: {package['balance']} токенов",
+        "metadata": {
+            "package_id": package_id,
+            "telegram_user_id": str(user_id),
+        },
+        "receipt": receipt,
+    }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        auth = aiohttp.BasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY)
+        headers = {"Idempotence-Key": uuid.uuid4().hex}
+        async with aiohttp.ClientSession(auth=auth, timeout=timeout) as session:
+            async with session.post(
+                f"{YOOKASSA_API_BASE_URL}/payments",
+                json=payload,
+                headers=headers,
+            ) as response:
+                data = await response.json(content_type=None)
+                if response.status not in (200, 201):
+                    logging.error("Failed to create SBP payment: status=%s body=%s", response.status, data)
+                    return {"error": _format_yookassa_error(data), "raw_error": data}
+                return data
+    except Exception:
+        logging.exception("Failed to create SBP payment.")
+        return {"error": "сетевая ошибка при обращении к YooKassa"}
+
+
+async def _get_sbp_payment(payment_id: str) -> Optional[Dict[str, Any]]:
+    if not payment_id or not _has_yookassa_api_credentials():
+        return None
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        auth = aiohttp.BasicAuth(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY)
+        async with aiohttp.ClientSession(auth=auth, timeout=timeout) as session:
+            async with session.get(f"{YOOKASSA_API_BASE_URL}/payments/{payment_id}") as response:
+                data = await response.json(content_type=None)
+                if response.status != 200:
+                    logging.error("Failed to fetch SBP payment: status=%s body=%s", response.status, data)
+                    return None
+                return data
+    except Exception:
+        logging.exception("Failed to fetch SBP payment status.")
+        return None
+
+
+def _get_package_id_from_sbp_payment(payment_data: Dict[str, Any]) -> Optional[str]:
+    metadata = payment_data.get("metadata") or {}
+    metadata_package_id = metadata.get("package_id")
+    if metadata_package_id in PAYMENT_PACKAGES:
+        return metadata_package_id
+
+    amount = payment_data.get("amount") or {}
+    amount_kopecks = _amount_value_to_kopecks(amount.get("value"))
+    if amount_kopecks is None:
+        return None
+    return _get_package_id_by_amount(amount_kopecks)
+
+
+def _get_owner_id_from_sbp_payment(payment_data: Dict[str, Any]) -> Optional[int]:
+    metadata = payment_data.get("metadata") or {}
+    raw_user_id = metadata.get("telegram_user_id")
+    try:
+        return int(raw_user_id)
+    except (TypeError, ValueError):
+        return None
+
+
+async def send_sbp_payment_link(update: Update, context: ContextTypes.DEFAULT_TYPE, package_id: str) -> None:
+    get_or_create_user(
+        update.effective_user.id,
+        update.effective_user.username,
+        update.effective_user.first_name,
+    )
+
+    if not _has_yookassa_api_credentials():
+        logging.error("YooKassa API credentials are missing. Set YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY.")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="❌ Оплата временно недоступна. Напишите в поддержку."
@@ -126,125 +281,152 @@ async def send_balance_invoice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    payload = _build_payment_payload(package_id, update.effective_user.id)
-    prices = [LabeledPrice(PAYMENT_LABEL, package["rub"] * 100)]
+    payment_data = await _create_sbp_payment(package_id, update.effective_user.id)
+    if not payment_data:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Не удалось создать платеж. Попробуйте еще раз или напишите в поддержку."
+        )
+        return
 
-    await context.bot.send_invoice(
+    if payment_data.get("error"):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Не удалось создать платеж: {payment_data['error']}"
+        )
+        return
+
+    payment_id = payment_data.get("id")
+    confirmation = payment_data.get("confirmation") or {}
+    confirmation_url = confirmation.get("confirmation_url")
+
+    if not payment_id or not confirmation_url:
+        logging.error("SBP payment payload missing id/confirmation_url: %s", payment_data)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Не удалось получить ссылку на оплату. Попробуйте еще раз или напишите в поддержку."
+        )
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("⚡ Оплатить", url=confirmation_url)],
+        [InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"{SBP_CHECK_CALLBACK_PREFIX}{payment_id}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="buy_tokens")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        title=PAYMENT_TITLE,
-        description=PAYMENT_DESCRIPTION,
-        payload=payload,
-        provider_token=provider_token,
-        currency=PAYMENT_CURRENCY,
-        prices=prices,
-        start_parameter=PAYMENT_START_PARAMETER
+        text=(
+            f"💳 *Оплата*\n\n"
+            f"Пакет: *{package['rub']}₽ → {package['balance']} токенов*\n\n"
+            "1) Нажмите кнопку оплаты\n"
+            "2) Подтвердите платеж\n"
+            "3) Вернитесь в чат и нажмите «Проверить оплату»"
+        ),
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
+    log_conversation(
+        update.effective_user.id,
+        "payment",
+        "sbp_payment_created",
+        content=f"package={package_id}",
+        metadata={"payment_id": payment_id},
     )
 
 
-async def handle_precheckout_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.pre_checkout_query
-    payload_data = _parse_payment_payload(query.invoice_payload)
-
-    if not payload_data or payload_data["user_id"] != query.from_user.id:
-        await query.answer(
-            ok=False,
-            error_message="Неверные параметры платежа. Попробуйте ещё раз или обратитесь в поддержку."
-        )
-        return
-
-    package = PAYMENT_PACKAGES.get(payload_data["package_id"])
-    if not package:
-        await query.answer(
-            ok=False,
-            error_message="Пакет оплаты не найден. Попробуйте ещё раз или обратитесь в поддержку."
-        )
-        return
-
-    expected_amount = package["rub"] * 100
-    if query.currency != PAYMENT_CURRENCY or query.total_amount != expected_amount:
-        await query.answer(
-            ok=False,
-            error_message="Сумма платежа не совпадает. Попробуйте ещё раз."
-        )
-        return
-
-    await query.answer(ok=True)
-
-
-async def handle_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = update.message
-    payment = message.successful_payment
+async def handle_sbp_status_check(update: Update, context: ContextTypes.DEFAULT_TYPE, payment_id: str) -> None:
     user = update.effective_user
-
-    payload_data = _parse_payment_payload(payment.invoice_payload)
-    package_id = None
-    if payload_data and payload_data.get("package_id") in PAYMENT_PACKAGES:
-        package_id = payload_data["package_id"]
-    else:
-        package_id = _get_package_id_by_amount(payment.total_amount)
-
     get_or_create_user(user.id, user.username, user.first_name)
 
-    if not package_id:
-        new_balance = apply_successful_payment(
-            telegram_user_id=user.id,
-            provider_payment_charge_id=payment.provider_payment_charge_id,
-            telegram_payment_charge_id=payment.telegram_payment_charge_id,
-            payload=payment.invoice_payload,
-            currency=payment.currency,
-            amount=payment.total_amount,
-            balance_added=0,
-            status="paid_unmapped"
+    payment_data = await _get_sbp_payment(payment_id)
+    if not payment_data:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Не удалось проверить статус платежа. Попробуйте снова через 10–15 секунд."
         )
-        await message.reply_text(
-            "✅ Платёж получен, но не удалось определить пакет пополнения. Напишите в поддержку."
+        return
+
+    owner_id = _get_owner_id_from_sbp_payment(payment_data)
+    if owner_id != user.id:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Этот платеж не найден для вашего аккаунта."
         )
-        if new_balance is not None:
-            log_conversation(
-                user.id,
-                "payment",
-                "successful_payment",
-                content="unmapped",
-                metadata={
-                    "provider_payment_charge_id": payment.provider_payment_charge_id,
-                    "telegram_payment_charge_id": payment.telegram_payment_charge_id,
-                    "total_amount": payment.total_amount,
-                    "currency": payment.currency,
-                }
+        return
+
+    payment_status = payment_data.get("status")
+    if payment_status != "succeeded":
+        if payment_status == "canceled":
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ Платеж отменен. Нажмите «Купить токены» и попробуйте снова."
             )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⏳ Платеж еще не подтвержден. Если уже оплатили, попробуйте снова через несколько секунд."
+            )
+        return
+
+    package_id = _get_package_id_from_sbp_payment(payment_data)
+    if not package_id:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✅ Оплата прошла, но пакет не определился. Напишите в поддержку."
+        )
+        return
+
+    amount_info = payment_data.get("amount") or {}
+    amount_kopecks = _amount_value_to_kopecks(amount_info.get("value"))
+    if amount_kopecks is None:
+        amount_kopecks = PAYMENT_PACKAGES[package_id]["rub"] * 100
+
+    payment_id = payment_data.get("id")
+    if not payment_id:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Не удалось подтвердить ID платежа. Напишите в поддержку."
+        )
         return
 
     balance_added = PAYMENT_PACKAGES[package_id]["balance"]
     new_balance = apply_successful_payment(
         telegram_user_id=user.id,
-        provider_payment_charge_id=payment.provider_payment_charge_id,
-        telegram_payment_charge_id=payment.telegram_payment_charge_id,
-        payload=payment.invoice_payload,
-        currency=payment.currency,
-        amount=payment.total_amount,
+        provider_payment_charge_id=payment_id,
+        telegram_payment_charge_id=f"sbp:{payment_id}",
+        payload=_build_payment_payload(package_id, user.id),
+        currency=amount_info.get("currency", PAYMENT_CURRENCY),
+        amount=amount_kopecks,
         balance_added=balance_added,
-        status="paid"
+        status="paid",
     )
 
     if new_balance is None:
-        await message.reply_text("✅ Платёж уже обработан. Баланс не изменён.")
+        current_user = get_or_create_user(user.id, user.username, user.first_name)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"✅ Платеж уже обработан. Текущий баланс: {current_user['balance']}."
+        )
         return
 
-    await message.reply_text(
-        f"✅ Баланс пополнен на {balance_added}. Текущий баланс: {new_balance}."
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"✅ Баланс пополнен на {balance_added}. Текущий баланс: {new_balance}."
     )
     log_conversation(
         user.id,
         "payment",
-        "successful_payment",
+        "successful_sbp_payment",
         content=f"package={package_id}",
         metadata={
-            "provider_payment_charge_id": payment.provider_payment_charge_id,
-            "telegram_payment_charge_id": payment.telegram_payment_charge_id,
-            "total_amount": payment.total_amount,
-            "currency": payment.currency,
+            "provider_payment_charge_id": payment_id,
+            "total_amount": amount_kopecks,
+            "currency": amount_info.get("currency", PAYMENT_CURRENCY),
             "balance_added": balance_added,
-        }
+        },
     )
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,7 +461,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balance = db_user["balance"]
     
     keyboard = [
-        [InlineKeyboardButton("💳 Купить токены", callback_data="buy_tokens")],
+        [InlineKeyboardButton("💳 Пополнить баланс", callback_data="buy_tokens")],
         [InlineKeyboardButton("🏠 В главное меню", callback_data="main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -298,7 +480,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def show_buy_tokens_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show token purchase menu with different price options"""
+    """Show SBP-only token purchase menu with package options."""
     keyboard = [
         [InlineKeyboardButton("💰 100₽ → 100 токенов", callback_data="buy_100")],
         [InlineKeyboardButton("💰 300₽ → 325 токенов", callback_data="buy_300")],
@@ -319,7 +501,8 @@ async def show_buy_tokens_menu(update: Update, context: ContextTypes.DEFAULT_TYP
             "• 300₽ — 325 токенов (+25 бонус)\n"
             "• 1000₽ — 1100 токенов (+100 бонус)\n"
             "• 3000₽ — 3500 токенов (+500 бонус)\n"
-            "• 5000₽ — 6000 токенов (+1000 бонус)"
+            "• 5000₽ — 6000 токенов (+1000 бонус)\n\n"
+            "После выбора вы получите кнопку для оплаты."
         ),
         reply_markup=reply_markup,
         parse_mode="Markdown"
@@ -396,7 +579,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text="❌ Не удалось определить пакет для оплаты. Напишите в поддержку."
             )
             return
-        await send_balance_invoice(update, context, package_id)
+        await send_sbp_payment_link(update, context, package_id)
+    elif query.data.startswith(SBP_CHECK_CALLBACK_PREFIX):
+        await query.answer("Проверяю оплату...")
+        payment_id = query.data[len(SBP_CHECK_CALLBACK_PREFIX):]
+        if not payment_id:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ Некорректный ID платежа. Попробуйте оплатить снова."
+            )
+            return
+        await handle_sbp_status_check(update, context, payment_id)
     elif query.data == "support":
         await query.answer()
         await support(update, context)
@@ -453,8 +646,6 @@ if __name__ == '__main__':
     create_photo_cmd_handler = CommandHandler('create_photo', lambda update, context: create_photo_handler(update, context))
     analyze_ctr_cmd_handler = CommandHandler('analyze_ctr', lambda update, context: analyze_ctr_handler(update, context))
     callback_handler = CallbackQueryHandler(button_callback)
-    precheckout_handler = PreCheckoutQueryHandler(handle_precheckout_query)
-    successful_payment_handler = MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment)
     message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     photo_handler = MessageHandler(filters.PHOTO, handle_photo)
     
@@ -464,8 +655,6 @@ if __name__ == '__main__':
     application.add_handler(create_photo_cmd_handler)
     application.add_handler(analyze_ctr_cmd_handler)
     application.add_handler(callback_handler)
-    application.add_handler(precheckout_handler)
-    application.add_handler(successful_payment_handler)
     application.add_handler(message_handler)
     application.add_handler(photo_handler)
     

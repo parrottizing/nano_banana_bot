@@ -3,17 +3,24 @@ Automated tests for the Telegram bot.
 Tests all commands and inline keyboard buttons.
 """
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch, mock_open
-from telegram import Update, User, Chat, Message, CallbackQuery, PhotoSize, File
+from telegram import Update, User, Chat, Message, CallbackQuery
 from telegram.ext import ContextTypes
-import io
-from PIL import Image
 
 # Import the handlers we want to test
 from bot import start, button_callback
 from handlers.create_photo import create_photo_handler, handle_photo_prompt
 from handlers.analyze_ctr import analyze_ctr_handler
+
+
+@pytest.fixture(autouse=True)
+def isolated_test_db(tmp_path, monkeypatch):
+    """Use isolated SQLite DB per test."""
+    test_db_path = tmp_path / "bot_data.db"
+    monkeypatch.setattr("database.db.DB_PATH", test_db_path)
+    from database import init_db
+    init_db()
+    yield
 
 
 class TestBotCommands:
@@ -62,8 +69,7 @@ class TestBotCommands:
         
         # Mock the banner file
         with patch('builtins.open', mock_open(read_data=b'fake_image_data')):
-            with patch('os.path.join', return_value='/fake/path/menu_banner.png'):
-                await start(mock_update, mock_context)
+            await start(mock_update, mock_context)
         
         # Verify that send_photo was called with the welcome message
         mock_context.bot.send_photo.assert_called_once()
@@ -75,8 +81,7 @@ class TestBotCommands:
         # Check that the caption contains user information
         caption = call_args.kwargs['caption']
         assert "TestUser" in caption
-        assert "testuser" in caption
-        assert "Баланс" in caption
+        assert "Я помогу" in caption
         
         # Check that the inline keyboard is present
         reply_markup = call_args.kwargs['reply_markup']
@@ -204,8 +209,7 @@ class TestBotCommands:
         
         # Mock the banner file
         with patch('builtins.open', mock_open(read_data=b'fake_image_data')):
-            with patch('os.path.join', return_value='/fake/path/menu_banner.png'):
-                await start(mock_update, mock_context)
+            await start(mock_update, mock_context)
         
         # Get the inline keyboard from the call
         call_args = mock_context.bot.send_photo.call_args
@@ -217,9 +221,7 @@ class TestBotCommands:
             for button in row:
                 if "Поддержка" in button.text:
                     support_button_found = True
-                    # Verify it's a URL button, not callback
-                    assert button.url is not None
-                    assert "t.me" in button.url
+                    assert button.callback_data == "support"
                     break
         
         assert support_button_found, "Support button not found in main menu"
@@ -237,27 +239,94 @@ class TestBotCommands:
         # Now send a text prompt
         mock_update.message.text = "красивый закат над океаном"
         
-        # Mock the Gemini API
-        with patch('handlers.create_photo.analyze_user_intent') as mock_intent:
-            mock_intent.return_value = {
-                'wants_ctr_improvement': False
-            }
-            
-            with patch('handlers.create_photo.genai.GenerativeModel') as mock_model:
-                mock_response = MagicMock()
-                mock_response.parts = []
-                mock_response.text = None
-                mock_model.return_value.generate_content_async = AsyncMock(return_value=mock_response)
-                
+        # Mock balance + generation pipeline (avoid API/network in tests)
+        with patch('handlers.create_photo.check_balance', return_value=True):
+            with patch('handlers.create_photo._process_image_generation', new=AsyncMock()) as mock_process:
                 result = await handle_photo_prompt(mock_update, mock_context)
         
         # Verify the handler processed the message
         assert result == True
+        mock_process.assert_called_once()
         
         # Verify processing message was sent
-        assert mock_context.bot.send_message.called
+        assert not mock_context.bot.send_message.called
         
         print("✅ Text prompt handling works correctly!")
+
+    @pytest.mark.asyncio
+    async def test_buy_package_creates_sbp_link(self, mock_callback_update, mock_context):
+        """Test that package selection creates SBP payment link."""
+        print("\n🧪 Testing SBP payment link creation...")
+
+        from bot import SBP_CHECK_CALLBACK_PREFIX
+        mock_callback_update.callback_query.data = "buy_100"
+
+        with patch("bot._has_yookassa_api_credentials", return_value=True):
+            with patch(
+                "bot._create_sbp_payment",
+                new=AsyncMock(
+                    return_value={
+                        "id": "payment_test_1",
+                        "confirmation": {"confirmation_url": "https://pay.test/sbp"},
+                    }
+                ),
+            ):
+                await button_callback(mock_callback_update, mock_context)
+
+        mock_context.bot.send_message.assert_called_once()
+        call_args = mock_context.bot.send_message.call_args
+        message_text = call_args.kwargs["text"]
+        assert "Оплата" in message_text
+
+        reply_markup = call_args.kwargs["reply_markup"]
+        pay_button = reply_markup.inline_keyboard[0][0]
+        status_button = reply_markup.inline_keyboard[1][0]
+        assert pay_button.url == "https://pay.test/sbp"
+        assert status_button.callback_data == f"{SBP_CHECK_CALLBACK_PREFIX}payment_test_1"
+
+        print("✅ SBP payment link creation works correctly!")
+
+    @pytest.mark.asyncio
+    async def test_sbp_status_success_credits_balance(self, mock_callback_update, mock_context):
+        """Test that successful SBP status check credits balance."""
+        print("\n🧪 Testing SBP payment status success flow...")
+
+        mock_callback_update.callback_query.data = "check_sbp:payment_test_2"
+        sbp_payment_data = {
+            "id": "payment_test_2",
+            "status": "succeeded",
+            "amount": {"value": "100.00", "currency": "RUB"},
+            "metadata": {"package_id": "100", "telegram_user_id": "12345"},
+        }
+
+        with patch("bot._get_sbp_payment", new=AsyncMock(return_value=sbp_payment_data)):
+            with patch("bot.apply_successful_payment", return_value=150) as mock_apply:
+                await button_callback(mock_callback_update, mock_context)
+
+        mock_apply.assert_called_once()
+        call_args = mock_context.bot.send_message.call_args
+        assert "Баланс пополнен" in call_args.kwargs["text"]
+
+        print("✅ SBP payment status success flow works correctly!")
+
+    @pytest.mark.asyncio
+    async def test_buy_package_shows_yookassa_error_details(self, mock_callback_update, mock_context):
+        """Test that YooKassa error details are shown to speed up debugging."""
+        print("\n🧪 Testing YooKassa detailed error propagation...")
+
+        mock_callback_update.callback_query.data = "buy_100"
+        with patch("bot._has_yookassa_api_credentials", return_value=True):
+            with patch(
+                "bot._create_sbp_payment",
+                new=AsyncMock(return_value={"error": "ошибка чека (receipt)"}),
+            ):
+                await button_callback(mock_callback_update, mock_context)
+
+        mock_context.bot.send_message.assert_called_once()
+        message_text = mock_context.bot.send_message.call_args.kwargs["text"]
+        assert "ошибка чека" in message_text
+
+        print("✅ YooKassa detailed error propagation works correctly!")
 
 
 class TestBotStateManagement:

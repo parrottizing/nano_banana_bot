@@ -34,7 +34,7 @@ A powerful Telegram bot for AI-powered image generation and CTR (Click-Through R
 - Built-in balance system for fair usage
 - New users receive **50 free tokens**
 - Transparent token costs per operation
-- **Buy Tokens**: Integrated menu for purchasing token packages
+- **Buy Tokens**: SBP-only top-ups via YooKassa API
 - Balance tracking and display
 
 ---
@@ -44,6 +44,7 @@ A powerful Telegram bot for AI-powered image generation and CTR (Click-Through R
 - Python 3.10+
 - Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
 - LaoZhang API Key (for Gemini access)
+- YooKassa Shop ID + Secret Key (for SBP payments)
 
 ---
 
@@ -68,7 +69,16 @@ Create a `.env` file in the project root:
 
 ```env
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-LAOZHANG_API_KEY=your_laozhang_api_key_here
+LAOZHANG_PER_REQUEST_API_KEY=your_laozhang_per_request_key
+LAOZHANG_PER_USE_API_KEY=your_laozhang_per_use_key
+YOOKASSA_SHOP_ID=your_yookassa_shop_id
+YOOKASSA_SECRET_KEY=your_yookassa_secret_key
+YOOKASSA_RECEIPT_EMAIL=checks@yourdomain.com
+# optional receipt tuning:
+# YOOKASSA_RECEIPT_VAT_CODE=1
+# YOOKASSA_RECEIPT_PAYMENT_MODE=full_prepayment
+# YOOKASSA_RECEIPT_PAYMENT_SUBJECT=service
+TELEGRAM_BOT_USERNAME=your_bot_username
 ```
 
 ### 4. Run the Bot
@@ -203,7 +213,16 @@ The tests cover:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | ✅ Yes | Your Telegram bot token from @BotFather |
-| `LAOZHANG_API_KEY` | ✅ Yes | LaoZhang API key for Gemini access |
+| `LAOZHANG_PER_REQUEST_API_KEY` | ✅ Yes | LaoZhang key for image generation requests |
+| `LAOZHANG_PER_USE_API_KEY` | ✅ Yes | LaoZhang key for text/classifier requests |
+| `LAOZHANG_API_KEY` | ⚪ Optional | Legacy fallback LaoZhang key |
+| `YOOKASSA_SHOP_ID` | ✅ Yes | YooKassa shop ID for SBP payments |
+| `YOOKASSA_SECRET_KEY` | ✅ Yes | YooKassa secret key for SBP payments |
+| `YOOKASSA_RECEIPT_EMAIL` | ✅ Yes* | Email for fiscal receipt in payment request (*required when fiscalization is enabled in YooKassa) |
+| `YOOKASSA_RECEIPT_VAT_CODE` | ⚪ Optional | VAT code for receipt item (default: `1`) |
+| `YOOKASSA_RECEIPT_PAYMENT_MODE` | ⚪ Optional | Receipt payment mode (default: `full_prepayment`) |
+| `YOOKASSA_RECEIPT_PAYMENT_SUBJECT` | ⚪ Optional | Receipt payment subject (default: `service`) |
+| `TELEGRAM_BOT_USERNAME` | ⚪ Optional | Bot username for SBP return URL (`https://t.me/<bot>`) |
 
 ### Customization
 

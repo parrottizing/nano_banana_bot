@@ -23,7 +23,8 @@ DEFAULT_BALANCE = 50
 
 def get_connection() -> sqlite3.Connection:
     """Get a database connection with row factory."""
-    conn = sqlite3.connect(DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
 
