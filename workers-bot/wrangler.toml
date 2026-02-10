@@ -1,11 +1,11 @@
 name = "nano-banana-workers-bot"
 main = "src/index.ts"
-compatibility_date = "2025-02-10"
+compatibility_date = "2026-02-10"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "nano-banana-bot"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "f8947b9c-3f2f-49fa-89c9-932bb4b07552"
 
 [[queues.producers]]
 binding = "BOT_JOBS"

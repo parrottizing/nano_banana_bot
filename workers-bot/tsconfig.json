@@ -6,11 +6,11 @@
     "strict": true,
     "skipLibCheck": true,
     "lib": ["ES2022", "WebWorker"],
-    "types": ["@cloudflare/workers-types", "vitest/globals"],
+    "types": ["vitest/globals"],
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["worker-configuration.d.ts", "src", "test", "vitest.config.ts"]
 }

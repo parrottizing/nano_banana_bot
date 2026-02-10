@@ -22,6 +22,7 @@ import {
 } from "../handlers/analyzeCtr";
 import { startImproveCtr } from "../handlers/improveCtr";
 import { sendPackagePaymentLink, showBuyTokensMenu } from "../handlers/payments";
+import { DEFAULT_MENU_BANNER_BASE64 } from "../assets/menuBannerBase64";
 
 function mainMenuKeyboard() {
   return {
@@ -59,7 +60,12 @@ export async function showStart(env: Env, telegram: TelegramClient, userId: numb
     return;
   }
 
-  await telegram.sendMessage(chatId, welcomeText, { reply_markup: mainMenuKeyboard() });
+  await telegram.sendPhoto(chatId, DEFAULT_MENU_BANNER_BASE64, {
+    caption: welcomeText,
+    reply_markup: mainMenuKeyboard(),
+  });
+
+  return;
 }
 
 export async function showSupport(env: Env, telegram: TelegramClient, userId: number, chatId: number): Promise<void> {
