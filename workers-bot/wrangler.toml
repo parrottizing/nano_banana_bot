@@ -1,0 +1,23 @@
+name = "nano-banana-workers-bot"
+main = "src/index.ts"
+compatibility_date = "2025-02-10"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nano-banana-bot"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[queues.producers]]
+binding = "BOT_JOBS"
+queue = "nano-banana-bot-jobs"
+
+[[queues.consumers]]
+queue = "nano-banana-bot-jobs"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[vars]
+YOOKASSA_API_BASE_URL = "https://api.yookassa.ru/v3"
+YOOKASSA_RECEIPT_VAT_CODE = "1"
+YOOKASSA_RECEIPT_PAYMENT_MODE = "full_prepayment"
+YOOKASSA_RECEIPT_PAYMENT_SUBJECT = "service"

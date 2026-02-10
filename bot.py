@@ -67,6 +67,7 @@ PAYMENT_PACKAGES = {
     "3000": {"rub": 3000, "balance": 3500},
     "5000": {"rub": 5000, "balance": 6000},
 }
+PAYMENT_PACKAGE_ORDER = ("100", "300", "1000", "3000", "5000")
 
 CALLBACK_TO_PACKAGE_ID = {
     "buy_100": "100",
@@ -75,6 +76,41 @@ CALLBACK_TO_PACKAGE_ID = {
     "buy_3000": "3000",
     "buy_5000": "5000",
 }
+
+
+def _build_package_button_label(package_id: str) -> str:
+    package = PAYMENT_PACKAGES[package_id]
+    return f"💰 {package['rub']}₽ → {package['balance']} токенов"
+
+
+async def _build_buy_tokens_keyboard(user_id: int):
+    keyboard = []
+    has_url_buttons = False
+    can_precreate_payment_links = _has_yookassa_api_credentials() and bool(YOOKASSA_RECEIPT_EMAIL)
+
+    for package_id in PAYMENT_PACKAGE_ORDER:
+        label = _build_package_button_label(package_id)
+
+        if can_precreate_payment_links:
+            payment_data = await _create_sbp_payment(package_id, user_id)
+            if payment_data and not payment_data.get("error"):
+                payment_id = payment_data.get("id")
+                confirmation = payment_data.get("confirmation") or {}
+                confirmation_url = confirmation.get("confirmation_url")
+                if payment_id and confirmation_url:
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(label, url=confirmation_url),
+                            InlineKeyboardButton("🔄", callback_data=f"{SBP_CHECK_CALLBACK_PREFIX}{payment_id}"),
+                        ]
+                    )
+                    has_url_buttons = True
+                    continue
+
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"buy_{package_id}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="balance")])
+    return keyboard, has_url_buttons
 
 async def setup_bot_commands(application):
     """Set up bot menu button commands"""
@@ -481,16 +517,15 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_buy_tokens_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show SBP-only token purchase menu with package options."""
-    keyboard = [
-        [InlineKeyboardButton("💰 100₽ → 100 токенов", callback_data="buy_100")],
-        [InlineKeyboardButton("💰 300₽ → 325 токенов", callback_data="buy_300")],
-        [InlineKeyboardButton("💰 1000₽ → 1100 токенов", callback_data="buy_1000")],
-        [InlineKeyboardButton("💰 3000₽ → 3500 токенов", callback_data="buy_3000")],
-        [InlineKeyboardButton("💰 5000₽ → 6000 токенов", callback_data="buy_5000")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="balance")]
-    ]
+    keyboard, has_url_buttons = await _build_buy_tokens_keyboard(update.effective_user.id)
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
+    payment_hint = (
+        "Кнопка пакета сразу открывает оплату, после оплаты нажмите 🔄 рядом с пакетом."
+        if has_url_buttons
+        else "После выбора вы получите кнопку для оплаты."
+    )
+
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=(
@@ -502,7 +537,7 @@ async def show_buy_tokens_menu(update: Update, context: ContextTypes.DEFAULT_TYP
             "• 1000₽ — 1100 токенов (+100 бонус)\n"
             "• 3000₽ — 3500 токенов (+500 бонус)\n"
             "• 5000₽ — 6000 токенов (+1000 бонус)\n\n"
-            "После выбора вы получите кнопку для оплаты."
+            f"{payment_hint}"
         ),
         reply_markup=reply_markup,
         parse_mode="Markdown"

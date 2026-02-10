@@ -2,3 +2,5 @@
 .DS_Store
 bot_data.db
 __pycache__/
+workers-bot/node_modules/
+workers-bot/.wrangler/

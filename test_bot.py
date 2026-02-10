@@ -8,7 +8,7 @@ from telegram import Update, User, Chat, Message, CallbackQuery
 from telegram.ext import ContextTypes
 
 # Import the handlers we want to test
-from bot import start, button_callback
+from bot import start, button_callback, show_buy_tokens_menu
 from handlers.create_photo import create_photo_handler, handle_photo_prompt
 from handlers.analyze_ctr import analyze_ctr_handler
 
@@ -285,6 +285,41 @@ class TestBotCommands:
         assert status_button.callback_data == f"{SBP_CHECK_CALLBACK_PREFIX}payment_test_1"
 
         print("✅ SBP payment link creation works correctly!")
+
+    @pytest.mark.asyncio
+    async def test_buy_tokens_menu_has_url_payment_buttons(self, mock_update, mock_context):
+        """Test that token package buttons are URL buttons for direct payment."""
+        print("\n🧪 Testing buy tokens menu URL payment buttons...")
+
+        mocked_payments = [
+            {
+                "id": f"payment_test_{package_id}",
+                "confirmation": {"confirmation_url": f"https://pay.test/sbp/{package_id}"},
+            }
+            for package_id in ("100", "300", "1000", "3000", "5000")
+        ]
+
+        with patch("bot._has_yookassa_api_credentials", return_value=True):
+            with patch("bot.YOOKASSA_RECEIPT_EMAIL", "test@example.com"):
+                with patch("bot._create_sbp_payment", new=AsyncMock(side_effect=mocked_payments)):
+                    await show_buy_tokens_menu(mock_update, mock_context)
+
+        mock_context.bot.send_message.assert_called_once()
+        call_args = mock_context.bot.send_message.call_args
+        message_text = call_args.kwargs["text"]
+        assert "Кнопка пакета сразу открывает оплату" in message_text
+
+        reply_markup = call_args.kwargs["reply_markup"]
+        first_row = reply_markup.inline_keyboard[0]
+        pay_button = first_row[0]
+        check_button = first_row[1]
+        assert pay_button.url == "https://pay.test/sbp/100"
+        assert check_button.callback_data == "check_sbp:payment_test_100"
+
+        back_button = reply_markup.inline_keyboard[-1][0]
+        assert back_button.callback_data == "balance"
+
+        print("✅ Buy tokens menu uses URL payment buttons correctly!")
 
     @pytest.mark.asyncio
     async def test_sbp_status_success_credits_balance(self, mock_callback_update, mock_context):
