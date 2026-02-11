@@ -184,7 +184,7 @@ export async function routeUpdate(env: Env, update: TelegramUpdate): Promise<voi
 
     await getOrCreateUser(env.DB, userId, message.from?.username, message.from?.first_name);
 
-    if (text === "/start") {
+    if (typeof text === "string" && text.startsWith("/start")) {
       await showStart(env, telegram, userId, chatId, message.from?.first_name);
       return;
     }

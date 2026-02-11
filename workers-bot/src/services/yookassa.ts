@@ -14,14 +14,29 @@ function yookassaBase(env: Env): string {
   return (env.YOOKASSA_API_BASE_URL ?? "https://api.yookassa.ru/v3").replace(/\/$/, "");
 }
 
+function telegramReturnUrl(env: Env): string {
+  const username = env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "");
+  if (!username) {
+    return "https://t.me";
+  }
+
+  const bridgeBase = env.PAYMENT_RETURN_BASE_URL?.replace(/\/$/, "");
+  if (!bridgeBase) {
+    return `https://t.me/${username}?start=sbp_return`;
+  }
+
+  const query = new URLSearchParams({
+    bot: username,
+    start: "sbp_return",
+  });
+  return `${bridgeBase}/payments/telegram-return?${query.toString()}`;
+}
+
 function buildPaymentPayload(env: Env, packageId: string, userId: number): Record<string, unknown> {
   const packageInfo = PAYMENT_PACKAGES[packageId];
   if (!packageInfo) {
     throw new Error(`Unknown package id: ${packageId}`);
   }
-
-  const username = env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "");
-  const returnUrl = username ? `https://t.me/${username}?start=sbp_return` : "https://t.me";
 
   return {
     amount: {

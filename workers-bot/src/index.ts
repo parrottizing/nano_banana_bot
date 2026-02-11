@@ -38,6 +38,14 @@ function isRetryableQueueError(error: unknown): boolean {
   return normalized.includes("timeout") || normalized.includes("temporar") || normalized.includes("fetch");
 }
 
+function cleanBotUsername(input: string | undefined): string | null {
+  if (!input) {
+    return null;
+  }
+  const cleaned = input.replace(/^@/, "").trim();
+  return cleaned || null;
+}
+
 async function notifyQueueFailure(env: Env, payload: JobPayload, error: unknown): Promise<void> {
   const telegram = new TelegramClient(env);
   const reason = error instanceof Error ? error.message : String(error);
@@ -101,6 +109,37 @@ async function notifyQueueRetry(
 }
 
 app.get("/healthz", (c) => c.json({ ok: true, service: "nano-banana-workers-bot" }));
+
+app.get("/payments/telegram-return", (c) => {
+  const username = cleanBotUsername(c.req.query("bot"));
+  if (!username) {
+    return c.redirect("https://t.me", 302);
+  }
+
+  const startParam = c.req.query("start")?.trim() || "sbp_return";
+  const encodedStartParam = encodeURIComponent(startParam);
+  const tgUrl = `tg://resolve?domain=${encodeURIComponent(username)}&start=${encodedStartParam}`;
+  const fallbackUrl = `https://t.me/${encodeURIComponent(username)}?start=${encodedStartParam}`;
+
+  return c.html(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Opening Telegram</title>
+    <meta http-equiv="refresh" content="2;url=${fallbackUrl}" />
+  </head>
+  <body>
+    <p>Opening Telegram...</p>
+    <script>
+      window.location.replace("${tgUrl}");
+      setTimeout(function () {
+        window.location.replace("${fallbackUrl}");
+      }, 1200);
+    </script>
+  </body>
+</html>`);
+});
 
 app.post("/telegram/webhook/:webhookSecret", async (c) => {
   const pathSecret = c.req.param("webhookSecret");
