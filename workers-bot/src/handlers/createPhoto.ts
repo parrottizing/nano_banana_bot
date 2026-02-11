@@ -70,7 +70,7 @@ export async function createPhotoEntry(env: Env, telegram: TelegramClient, userI
     {
       parse_mode: "Markdown",
       reply_markup: {
-        inline_keyboard: [[{ text: "⚙️ Изменить кол-во вариантов", callback_data: "change_image_count" }]],
+        inline_keyboard: [[{ text: "⚙️ Изменить кол-во изображений за раз", callback_data: "change_image_count" }]],
       },
     },
   );

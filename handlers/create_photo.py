@@ -156,7 +156,7 @@ async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     
     # Add button to change image count setting
-    keyboard = [[InlineKeyboardButton("⚙️ Изменить кол-во вариантов", callback_data="change_image_count")]]
+    keyboard = [[InlineKeyboardButton("⚙️ Изменить кол-во изображений за раз", callback_data="change_image_count")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Check if this is a callback query (inline button) or a command
