@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { routeUpdate } from "./telegram/router";
 import type { Env } from "./types/env";
 import type { TelegramUpdate } from "./types/telegram";
-import { handleYooKassaWebhook } from "./handlers/payments";
+import { handleYooKassaWebhook, reconcileRecentPaymentsForUser } from "./handlers/payments";
 import { processQueueMessage } from "./services/queueProcessor";
 import type { JobPayload } from "./types/jobs";
 import { TelegramClient } from "./telegram/client";
@@ -116,10 +116,13 @@ app.get("/payments/telegram-return", (c) => {
     return c.redirect("https://t.me", 302);
   }
 
-  const startParam = c.req.query("start")?.trim() || "sbp_return";
-  const encodedStartParam = encodeURIComponent(startParam);
-  const tgUrl = `tg://resolve?domain=${encodeURIComponent(username)}&start=${encodedStartParam}`;
-  const fallbackUrl = `https://t.me/${encodeURIComponent(username)}?start=${encodedStartParam}`;
+  const userId = Number(c.req.query("uid"));
+  if (Number.isInteger(userId) && userId > 0) {
+    c.executionCtx.waitUntil(reconcileRecentPaymentsForUser(c.env, userId, 12));
+  }
+
+  const tgUrl = `tg://resolve?domain=${encodeURIComponent(username)}`;
+  const fallbackUrl = `https://t.me/${encodeURIComponent(username)}`;
 
   return c.html(`<!doctype html>
 <html lang="en">

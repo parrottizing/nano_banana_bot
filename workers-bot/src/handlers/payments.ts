@@ -2,6 +2,8 @@ import {
   logConversation,
   getOrCreateUser,
   applySuccessfulPayment,
+  findCreatedPaymentReference,
+  listRecentPendingPaymentIds,
 } from "../db/repositories";
 import {
   PAYMENT_CURRENCY,
@@ -129,6 +131,127 @@ function packageByAmountKopecks(amount: number): string | null {
   return null;
 }
 
+interface ResolvedPaymentContext {
+  telegramUserId: number;
+  packageId: string;
+  amount: number;
+  currency: string;
+  balanceAdded: number;
+}
+
+async function resolvePaymentContext(
+  env: Env,
+  payload: PaymentWebhookEvent,
+  verified: Record<string, unknown>,
+  paymentId: string,
+): Promise<ResolvedPaymentContext | null> {
+  const verifiedMetadata = ((verified as any)?.metadata ?? {}) as Record<string, string>;
+  const payloadMetadata = (payload.object?.metadata ?? {}) as Record<string, string>;
+
+  let packageId = verifiedMetadata.package_id || payloadMetadata.package_id || null;
+  let telegramUserId = Number(verifiedMetadata.telegram_user_id ?? payloadMetadata.telegram_user_id ?? "");
+
+  if (!packageId || !Number.isInteger(telegramUserId)) {
+    const fallbackReference = await findCreatedPaymentReference(env.DB, paymentId);
+    if (fallbackReference) {
+      packageId ||= fallbackReference.packageId;
+      if (!Number.isInteger(telegramUserId)) {
+        telegramUserId = fallbackReference.telegramUserId;
+      }
+    }
+  }
+
+  if (!packageId || !Number.isInteger(telegramUserId)) {
+    return null;
+  }
+
+  const amountSource = ((verified as any)?.amount ?? payload.object?.amount) as
+    | { value?: string; currency?: string }
+    | undefined;
+  const amountKopecks = amountToKopecks(String(amountSource?.value ?? "0"));
+  const resolvedPackage = PAYMENT_PACKAGES[packageId] ? packageId : packageByAmountKopecks(amountKopecks);
+  if (!resolvedPackage) {
+    return null;
+  }
+
+  const balanceAdded = PAYMENT_PACKAGES[resolvedPackage].balance;
+  const amount = amountKopecks || PAYMENT_PACKAGES[resolvedPackage].rub * 100;
+  const currency = String(amountSource?.currency ?? PAYMENT_CURRENCY);
+
+  return {
+    telegramUserId,
+    packageId: resolvedPackage,
+    amount,
+    currency,
+    balanceAdded,
+  };
+}
+
+async function processSucceededPayment(
+  env: Env,
+  payload: PaymentWebhookEvent,
+  paymentId: string,
+  verified: Record<string, unknown>,
+): Promise<"credited" | "already_credited" | "retry"> {
+  const context = await resolvePaymentContext(env, payload, verified, paymentId);
+  if (!context) {
+    console.error("Unable to resolve YooKassa payment context", {
+      paymentId,
+      verifiedMetadata: (verified as any)?.metadata ?? null,
+      payloadMetadata: payload.object?.metadata ?? null,
+      payloadAmount: payload.object?.amount ?? null,
+      verifiedAmount: (verified as any)?.amount ?? null,
+    });
+    return "retry";
+  }
+
+  await getOrCreateUser(env.DB, context.telegramUserId);
+
+  const newBalance = await applySuccessfulPayment(env.DB, {
+    telegramUserId: context.telegramUserId,
+    providerPaymentChargeId: paymentId,
+    telegramPaymentChargeId: `sbp:${paymentId}`,
+    payload: `balance_topup:${context.packageId}:${context.telegramUserId}`,
+    currency: context.currency,
+    amount: context.amount,
+    balanceAdded: context.balanceAdded,
+    status: "paid",
+  });
+
+  if (newBalance === null) {
+    return "already_credited";
+  }
+
+  await logConversation(env.DB, {
+    telegramUserId: context.telegramUserId,
+    feature: "payment",
+    messageType: "successful_sbp_payment",
+    content: `package=${context.packageId}`,
+    metadata: {
+      provider_payment_charge_id: paymentId,
+      total_amount: context.amount,
+      currency: context.currency,
+      balance_added: context.balanceAdded,
+    },
+  });
+
+  const telegram = new TelegramClient(env);
+  try {
+    await telegram.sendMessage(
+      context.telegramUserId,
+      `✅ Баланс пополнен на ${context.balanceAdded}. Текущий баланс: ${newBalance}.`,
+    );
+  } catch (error) {
+    console.error("Failed to notify user about successful payment", {
+      telegramUserId: context.telegramUserId,
+      paymentId,
+      error,
+    });
+  }
+
+  return "credited";
+}
+
 export async function handleYooKassaWebhook(env: Env, payload: PaymentWebhookEvent): Promise<Response> {
   if (payload.event !== "payment.succeeded") {
     return new Response("ignored", { status: 200 });
@@ -140,62 +263,42 @@ export async function handleYooKassaWebhook(env: Env, payload: PaymentWebhookEve
   }
 
   const yookassa = new YooKassaService(env);
-  const verified = await yookassa.getPayment(paymentId);
-  const status = String((verified as any)?.status ?? "");
+  let verified: Record<string, unknown>;
+  try {
+    verified = await yookassa.getPayment(paymentId);
+  } catch (error) {
+    console.error("YooKassa getPayment failed in webhook", { paymentId, error });
+    return new Response("retry", { status: 502 });
+  }
+
+  const status = String((verified as any)?.status ?? payload.object?.status ?? "");
   if (status !== "succeeded") {
-    return new Response("ignored", { status: 200 });
+    console.warn("YooKassa webhook status is not succeeded yet", { paymentId, status });
+    return new Response("retry", { status: 409 });
   }
 
-  const metadata = ((verified as any)?.metadata ?? {}) as Record<string, string>;
-  const packageId = metadata.package_id || null;
-  const telegramUserId = Number(metadata.telegram_user_id);
-  if (!packageId || !Number.isInteger(telegramUserId)) {
-    return new Response("missing metadata", { status: 400 });
-  }
-
-  await getOrCreateUser(env.DB, telegramUserId);
-
-  const amountObj = (verified as any)?.amount;
-  const amountKopecks = amountToKopecks(String(amountObj?.value ?? "0"));
-  const resolvedPackage = PAYMENT_PACKAGES[packageId] ? packageId : packageByAmountKopecks(amountKopecks);
-  if (!resolvedPackage) {
-    return new Response("unknown package", { status: 400 });
-  }
-
-  const balanceAdded = PAYMENT_PACKAGES[resolvedPackage].balance;
-  const amount = amountKopecks || PAYMENT_PACKAGES[resolvedPackage].rub * 100;
-
-  const newBalance = await applySuccessfulPayment(env.DB, {
-    telegramUserId,
-    providerPaymentChargeId: paymentId,
-    telegramPaymentChargeId: `sbp:${paymentId}`,
-    payload: `balance_topup:${resolvedPackage}:${telegramUserId}`,
-    currency: String(amountObj?.currency ?? PAYMENT_CURRENCY),
-    amount,
-    balanceAdded,
-    status: "paid",
-  });
-
-  const telegram = new TelegramClient(env);
-  if (newBalance !== null) {
-    await telegram.sendMessage(
-      telegramUserId,
-      `✅ Баланс пополнен на ${balanceAdded}. Текущий баланс: ${newBalance}.`,
-    );
-
-    await logConversation(env.DB, {
-      telegramUserId,
-      feature: "payment",
-      messageType: "successful_sbp_payment",
-      content: `package=${resolvedPackage}`,
-      metadata: {
-        provider_payment_charge_id: paymentId,
-        total_amount: amount,
-        currency: String(amountObj?.currency ?? PAYMENT_CURRENCY),
-        balance_added: balanceAdded,
-      },
-    });
+  const result = await processSucceededPayment(env, payload, paymentId, verified);
+  if (result === "retry") {
+    return new Response("retry", { status: 409 });
   }
 
   return new Response("ok", { status: 200 });
+}
+
+export async function reconcileRecentPaymentsForUser(env: Env, telegramUserId: number, limit = 12): Promise<void> {
+  const paymentIds = await listRecentPendingPaymentIds(env.DB, telegramUserId, limit);
+  if (paymentIds.length === 0) {
+    return;
+  }
+
+  for (const paymentId of paymentIds) {
+    const syntheticPayload: PaymentWebhookEvent = {
+      event: "payment.succeeded",
+      object: {
+        id: paymentId,
+        status: "succeeded",
+      },
+    };
+    await handleYooKassaWebhook(env, syntheticPayload);
+  }
 }

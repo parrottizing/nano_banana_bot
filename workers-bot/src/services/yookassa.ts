@@ -14,7 +14,7 @@ function yookassaBase(env: Env): string {
   return (env.YOOKASSA_API_BASE_URL ?? "https://api.yookassa.ru/v3").replace(/\/$/, "");
 }
 
-function telegramReturnUrl(env: Env): string {
+function telegramReturnUrl(env: Env, userId: number): string {
   const username = env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "");
   if (!username) {
     return "https://t.me";
@@ -22,12 +22,12 @@ function telegramReturnUrl(env: Env): string {
 
   const bridgeBase = env.PAYMENT_RETURN_BASE_URL?.replace(/\/$/, "");
   if (!bridgeBase) {
-    return `https://t.me/${username}?start=sbp_return`;
+    return `https://t.me/${username}`;
   }
 
   const query = new URLSearchParams({
     bot: username,
-    start: "sbp_return",
+    uid: String(userId),
   });
   return `${bridgeBase}/payments/telegram-return?${query.toString()}`;
 }
@@ -47,7 +47,7 @@ function buildPaymentPayload(env: Env, packageId: string, userId: number): Recor
     payment_method_data: { type: "sbp" },
     confirmation: {
       type: "redirect",
-      return_url: telegramReturnUrl(env),
+      return_url: telegramReturnUrl(env, userId),
     },
     description: PAYMENT_TITLE,
     metadata: {
