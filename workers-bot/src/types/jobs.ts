@@ -28,6 +28,7 @@ export interface ImproveCtrJobPayload extends BaseJobPayload {
   type: "IMPROVE_CTR_JOB";
   sourceFileId: string;
   recommendations: string;
+  loadingMessageId?: number;
 }
 
 export interface FlushMediaGroupJobPayload extends BaseJobPayload {

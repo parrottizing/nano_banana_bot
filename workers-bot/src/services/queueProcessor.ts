@@ -27,11 +27,27 @@ import { TOKEN_COSTS } from "../types/domain";
 
 const PHOTO_LOADING_EMOJIS = ["🤔", "💡", "🎨"] as const;
 const CTR_LOADING_EMOJIS = ["🔍", "✍️", "📝"] as const;
+const IMPROVE_LOADING_EMOJIS = PHOTO_LOADING_EMOJIS;
 const ANIMATION_STEP_DELAY_MS = 2900;
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isMessageNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const text = error.message.toLowerCase();
+  return text.includes("message to edit not found") || text.includes("message to delete not found");
+}
+
+function isMessageUnchangedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.toLowerCase().includes("message is not modified");
 }
 
 async function startLoadingAnimation(
@@ -46,7 +62,19 @@ async function startLoadingAnimation(
   const emojis = options?.emojis && options.emojis.length > 0 ? options.emojis : PHOTO_LOADING_EMOJIS;
   const chatAction = options?.chatAction ?? "typing";
   let messageId = options?.initialMessageId;
-  if (!messageId) {
+  if (messageId) {
+    try {
+      // Validate that the message still exists after queue retries.
+      await telegram.editMessageText(chatId, messageId, emojis[0]);
+    } catch (error) {
+      if (isMessageNotFoundError(error)) {
+        const message = await telegram.sendMessage(chatId, emojis[0]);
+        messageId = message.message_id;
+      } else if (!isMessageUnchangedError(error)) {
+        console.warn("Failed to reuse loading message, keeping existing message", { chatId, messageId, error });
+      }
+    }
+  } else {
     const message = await telegram.sendMessage(chatId, emojis[0]);
     messageId = message.message_id;
   }
@@ -65,6 +93,15 @@ async function startLoadingAnimation(
       try {
         await telegram.editMessageText(chatId, messageId, emojis[emojiIndex]);
       } catch (error) {
+        if (isMessageNotFoundError(error)) {
+          try {
+            const message = await telegram.sendMessage(chatId, emojis[emojiIndex]);
+            messageId = message.message_id;
+            continue;
+          } catch (createError) {
+            console.warn("Failed to recreate loading message", { chatId, createError });
+          }
+        }
         console.warn("Failed to update loading emoji", { chatId, messageId, error });
       }
 
@@ -79,6 +116,9 @@ async function startLoadingAnimation(
   return async () => {
     stopped = true;
     await loop;
+    if (typeof messageId !== "number") {
+      return;
+    }
     try {
       await telegram.deleteMessage(chatId, messageId);
     } catch (error) {
@@ -347,41 +387,59 @@ async function processAnalyzeCtr(env: Env, payload: AnalyzeCtrJobPayload): Promi
 async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promise<void> {
   const telegram = new TelegramClient(env);
   const laozhang = new LaoZhangService(env);
+  let stopLoadingAnimation: (() => Promise<void>) | null = null;
 
-  const [imageBase64] = await fileIdsToBase64(telegram, laozhang, [payload.sourceFileId]);
-  const prompt = buildImprovementPrompt(payload.recommendations);
+  try {
+    stopLoadingAnimation = await startLoadingAnimation(telegram, payload.chatId, {
+      initialMessageId: payload.loadingMessageId,
+      emojis: IMPROVE_LOADING_EMOJIS,
+      chatAction: "upload_photo",
+    });
 
-  const image = await laozhang.generateImage({
-    prompt,
-    imageBase64: [imageBase64],
-    aspectRatio: "3:4",
-    imageSize: "2K",
-  });
+    const [imageBase64] = await fileIdsToBase64(telegram, laozhang, [payload.sourceFileId]);
+    const prompt = buildImprovementPrompt(payload.recommendations);
 
-  if (!image) {
-    await telegram.sendMessage(payload.chatId, "❌ Ошибка при улучшении изображения.");
+    const image = await laozhang.generateImage({
+      prompt,
+      imageBase64: [imageBase64],
+      aspectRatio: "3:4",
+      imageSize: "2K",
+    });
+
+    if (stopLoadingAnimation) {
+      await stopLoadingAnimation();
+      stopLoadingAnimation = null;
+    }
+
+    if (!image) {
+      await telegram.sendMessage(payload.chatId, "❌ Ошибка при улучшении изображения.");
+      await logConversation(env.DB, {
+        telegramUserId: payload.telegramUserId,
+        feature: "improve_ctr",
+        messageType: "error",
+        content: "image generation failed",
+        success: false,
+      });
+      return;
+    }
+
+    await sendGeneratedImages(telegram, payload.chatId, [image]);
+    await updateUserBalance(env.DB, payload.telegramUserId, -TOKEN_COSTS.create_photo);
+
     await logConversation(env.DB, {
       telegramUserId: payload.telegramUserId,
       feature: "improve_ctr",
-      messageType: "error",
-      content: "image generation failed",
-      success: false,
+      messageType: "bot_image_generated",
+      content: "improved image generated",
+      imageCount: 1,
+      tokensUsed: TOKEN_COSTS.create_photo,
+      success: true,
     });
-    return;
+  } finally {
+    if (stopLoadingAnimation) {
+      await stopLoadingAnimation();
+    }
   }
-
-  await sendGeneratedImages(telegram, payload.chatId, [image]);
-  await updateUserBalance(env.DB, payload.telegramUserId, -TOKEN_COSTS.create_photo);
-
-  await logConversation(env.DB, {
-    telegramUserId: payload.telegramUserId,
-    feature: "improve_ctr",
-    messageType: "bot_image_generated",
-    content: "improved image generated",
-    imageCount: 1,
-    tokensUsed: TOKEN_COSTS.create_photo,
-    success: true,
-  });
 }
 
 async function processFlushMediaGroup(env: Env, payload: FlushMediaGroupJobPayload): Promise<void> {

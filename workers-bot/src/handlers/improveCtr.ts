@@ -59,6 +59,7 @@ export async function startImproveCtr(env: Env, telegram: TelegramClient, userId
     content: "improve_ctr",
   });
 
+  const loadingMessage = await telegram.sendMessage(chatId, "🤔");
   await enqueueJob(env, {
     id: makeJobId("improve_ctr"),
     type: "IMPROVE_CTR_JOB",
@@ -66,7 +67,6 @@ export async function startImproveCtr(env: Env, telegram: TelegramClient, userId
     chatId,
     sourceFileId,
     recommendations,
+    loadingMessageId: loadingMessage.message_id,
   });
-
-  await telegram.sendMessage(chatId, "🚀 *Улучшаем карточку товара...*", { parse_mode: "Markdown" });
 }
