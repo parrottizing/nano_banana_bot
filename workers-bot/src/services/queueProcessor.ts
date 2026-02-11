@@ -23,6 +23,11 @@ import type {
 import { TelegramClient } from "../telegram/client";
 import { LaoZhangService, TEXT_MODEL } from "./laozhang";
 import { enqueueJob, makeJobId } from "./jobs";
+import {
+  ANIMATION_STEP_DELAY_MS,
+  getEmojiHoldDelayMs,
+  getInitialEmojiDelayMs,
+} from "./loadingAnimation";
 import { CTR_ANALYSIS_PROMPT } from "../handlers/analyzeCtr";
 import { buildImprovementPrompt } from "../handlers/improveCtr";
 import { CTR_ENHANCEMENT_PROMPT } from "../handlers/createPhoto";
@@ -31,7 +36,6 @@ import { TOKEN_COSTS } from "../types/domain";
 const PHOTO_LOADING_EMOJIS = ["🤔", "💡", "🎨"] as const;
 const CTR_LOADING_EMOJIS = ["🔍", "✍️", "📝"] as const;
 const IMPROVE_LOADING_EMOJIS = PHOTO_LOADING_EMOJIS;
-const ANIMATION_STEP_DELAY_MS = 2900;
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const MEDIA_GROUP_SETTLE_WINDOW_MS = 3500;
 const MEDIA_GROUP_RETRY_DELAY_SECONDS = 2;
@@ -77,6 +81,7 @@ async function startLoadingAnimation(
   const emojis = options?.emojis && options.emojis.length > 0 ? options.emojis : PHOTO_LOADING_EMOJIS;
   const chatAction = options?.chatAction ?? "typing";
   let messageId = options?.initialMessageId;
+  let initialMessageSentAtMs = options?.initialMessageSentAtMs;
   if (messageId) {
     try {
       // Validate that the message still exists after queue retries.
@@ -85,6 +90,7 @@ async function startLoadingAnimation(
       if (isMessageNotFoundError(error)) {
         const message = await telegram.sendMessage(chatId, emojis[0]);
         messageId = message.message_id;
+        initialMessageSentAtMs = Date.now();
       } else if (!isMessageUnchangedError(error)) {
         console.warn("Failed to reuse loading message, keeping existing message", { chatId, messageId, error });
       }
@@ -92,18 +98,12 @@ async function startLoadingAnimation(
   } else {
     const message = await telegram.sendMessage(chatId, emojis[0]);
     messageId = message.message_id;
+    initialMessageSentAtMs = Date.now();
   }
 
   let stopped = false;
   let emojiIndex = 0;
-  let delayBeforeNextStepMs = ANIMATION_STEP_DELAY_MS;
-
-  if (typeof options?.initialMessageSentAtMs === "number") {
-    const elapsedMs = Date.now() - options.initialMessageSentAtMs;
-    if (Number.isFinite(elapsedMs) && elapsedMs > 0) {
-      delayBeforeNextStepMs = Math.max(0, ANIMATION_STEP_DELAY_MS - elapsedMs);
-    }
-  }
+  let delayBeforeNextStepMs = getInitialEmojiDelayMs(initialMessageSentAtMs);
 
   const loop = (async () => {
     while (!stopped) {
@@ -115,28 +115,33 @@ async function startLoadingAnimation(
       }
 
       emojiIndex = (emojiIndex + 1) % emojis.length;
+      let emojiDisplayed = false;
       try {
         await telegram.editMessageText(chatId, messageId, emojis[emojiIndex]);
+        emojiDisplayed = true;
       } catch (error) {
         if (isMessageNotFoundError(error)) {
           try {
             const message = await telegram.sendMessage(chatId, emojis[emojiIndex]);
             messageId = message.message_id;
-            continue;
+            emojiDisplayed = true;
           } catch (createError) {
             console.warn("Failed to recreate loading message", { chatId, createError });
           }
+        } else {
+          console.warn("Failed to update loading emoji", { chatId, messageId, error });
         }
-        console.warn("Failed to update loading emoji", { chatId, messageId, error });
       }
 
-      try {
-        await telegram.sendChatAction(chatId, chatAction);
-      } catch (error) {
-        console.warn("Failed to send chat action", { chatId, error });
+      if (emojiDisplayed) {
+        try {
+          await telegram.sendChatAction(chatId, chatAction);
+        } catch (error) {
+          console.warn("Failed to send chat action", { chatId, error });
+        }
       }
 
-      delayBeforeNextStepMs = ANIMATION_STEP_DELAY_MS;
+      delayBeforeNextStepMs = emojiDisplayed ? getEmojiHoldDelayMs(emojiIndex) : ANIMATION_STEP_DELAY_MS;
     }
   })();
 
