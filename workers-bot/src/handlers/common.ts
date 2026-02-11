@@ -38,7 +38,7 @@ export function createPhotoMessage(balance: number, imageCount: number): string 
   return (
     "🎨 *Создание фото*\n\n" +
     "Отправьте описание изображения, которое хотите создать или отредактировать.\n\n" +
-    `📸 _Вариантов: ${imageCount}_\n` +
+    `📸 _Количество изображений за один запрос: ${imageCount}_\n` +
     `💰 _Стоимость: ${cost} токенов_\n` +
     `🎫 _Ваш баланс: ${balance} токенов_`
   );

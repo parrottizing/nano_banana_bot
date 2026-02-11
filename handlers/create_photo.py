@@ -150,7 +150,7 @@ async def create_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     message_text = (
         "🎨 *Создание фото*\n\n"
         "Отправьте описание изображения, которое хотите создать или отредактировать.\n\n"
-        f"📸 _Вариантов: {image_count}_\n"
+        f"📸 _Количество изображений за один запрос: {image_count}_\n"
         f"💰 _Стоимость: {cost} токенов_\n"
         f"🎫 _Ваш баланс: {balance} токенов_"
     )
