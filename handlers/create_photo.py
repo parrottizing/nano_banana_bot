@@ -30,6 +30,12 @@ ANIMATION_STEP_DELAY = 2.9  # Seconds between emoji changes
 # Media group (album) configuration
 MEDIA_GROUP_TIMEOUT = 1.5  # Seconds to wait for more images in album
 
+
+def _image_count_word(count: int) -> str:
+    """Return the noun form for image count in create-photo messages."""
+    return "изображение" if count == 1 else "изображения"
+
+
 async def run_loading_animation(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """
     Runs a cycling loading animation that sends, edits, and deletes messages.
@@ -176,11 +182,11 @@ async def _show_image_count_selection(update: Update, context: ContextTypes.DEFA
     """
     message_text = (
         "🎨 *Сколько изображений создавать за раз?*\n\n"
-        "AI-генерация — творческий процесс. Чем больше вариантов, "
+        "AI-генерация — творческий процесс. Чем больше изображений, "
         "тем выше шанс найти идеальный результат.\n\n"
-        "• 1 вариант — 25 токенов\n"
-        "• 2 варианта — 50 токенов\n"
-        "• 4 варианта — 100 токенов ⭐\n\n"
+        "• 1 изображение — 25 токенов\n"
+        "• 2 изображения — 50 токенов\n"
+        "• 4 изображения — 100 токенов ⭐\n\n"
         "_💡 Изменить можно в любой момент_"
     )
     
@@ -217,7 +223,7 @@ async def handle_image_count_selection(update: Update, context: ContextTypes.DEF
     set_user_image_count(user_id, count)
     mark_image_count_prompt_seen(user_id)
     
-    await query.answer(f"✅ Установлено: {count} вариант(ов)")
+    await query.answer(f"✅ Установлено: {count} {_image_count_word(count)} за раз")
     
     # Now proceed to create_photo flow
     await create_photo_handler(update, context)
@@ -240,7 +246,7 @@ async def show_change_image_count_menu(update: Update, context: ContextTypes.DEF
         4: "4️⃣ ⭐" + (" ✓" if current_count == 4 else ""),
     }
     
-    current_label = "изображение" if current_count == 1 else "изображений"
+    current_label = _image_count_word(current_count)
     message_text = (
         "⚙️ *Количество изображений за раз*\n\n"
         "Чем больше изображений вы генерируете за раз, "
@@ -377,7 +383,7 @@ async def _process_collected_media_group(context: ContextTypes.DEFAULT_TYPE,
     if not check_balance(user_id, total_cost):
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} вариантов)\n"
+            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} {_image_count_word(image_count)})\n"
                  "Пополните баланс для продолжения."
         )
         clear_user_state(user_id)
@@ -425,7 +431,7 @@ async def handle_create_photo_image(update: Update, context: ContextTypes.DEFAUL
     if not check_balance(user_id, total_cost):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} вариантов)\n"
+            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} {_image_count_word(image_count)})\n"
                  "Пополните баланс для продолжения."
         )
         clear_user_state(user_id)
@@ -486,7 +492,7 @@ async def handle_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not check_balance(user_id, total_cost):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} вариантов)\n"
+            text=f"❌ Недостаточно токенов! Требуется: {total_cost} ({image_count} {_image_count_word(image_count)})\n"
                  "Пополните баланс для продолжения."
         )
         clear_user_state(user_id)

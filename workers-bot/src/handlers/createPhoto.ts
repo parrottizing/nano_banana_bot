@@ -21,6 +21,10 @@ import { enqueueJob, makeJobId } from "../services/jobs";
 export const CTR_ENHANCEMENT_PROMPT = `\nКРИТИЧЕСКИ ВАЖНО: Пользователь хочет улучшить CTR (кликабельность) для маркетплейса (Wildberries, Ozon, Яндекс.Маркет).\n\nПРИМЕНЯЙ СТРАТЕГИЮ "УМНОГО МИНИМАЛИЗМА" (2025):\n\n• Товар должен занимать минимум 60-70% площади изображения\n• Только 1-2 крупных тезиса\n• Соотношение сторон строго 3:4\n• Без указания цены на изображении\n• Чистая, контрастная композиция`;
 const FLUSH_MEDIA_GROUP_DELAY_SECONDS = 3;
 
+function imageCountWord(count: number): string {
+  return count === 1 ? "изображение" : "изображения";
+}
+
 export async function createPhotoEntry(env: Env, telegram: TelegramClient, userId: number, chatId: number): Promise<void> {
   await getOrCreateUser(env.DB, userId);
 
@@ -28,9 +32,9 @@ export async function createPhotoEntry(env: Env, telegram: TelegramClient, userI
     await telegram.sendMessage(
       chatId,
       "🎨 *Сколько изображений создавать за раз?*\n\n" +
-        "• 1 вариант — 25 токенов\n" +
-        "• 2 варианта — 50 токенов\n" +
-        "• 4 варианта — 100 токенов ⭐\n\n" +
+        "• 1 изображение — 25 токенов\n" +
+        "• 2 изображения — 50 токенов\n" +
+        "• 4 изображения — 100 токенов ⭐\n\n" +
         "_💡 Изменить можно в любой момент_",
       {
         parse_mode: "Markdown",
@@ -85,7 +89,7 @@ export async function handleSetImageCount(
 ): Promise<void> {
   await setUserImageCount(env.DB, userId, count);
   await markImageCountPromptSeen(env.DB, userId);
-  await telegram.sendMessage(chatId, `✅ Установлено: ${count} вариант(ов)`);
+  await telegram.sendMessage(chatId, `✅ Установлено: ${count} ${imageCountWord(count)} за раз`);
   await createPhotoEntry(env, telegram, userId, chatId);
 }
 
@@ -97,7 +101,7 @@ export async function showChangeImageCountMenu(
 ): Promise<void> {
   const current = await getUserImageCount(env.DB, userId);
   const label = (value: number, text: string) => `${text}${current === value ? " ✓" : ""}`;
-  const currentLabel = current === 1 ? "изображение" : "изображений";
+  const currentLabel = imageCountWord(current);
 
   await telegram.sendMessage(
     chatId,
@@ -140,7 +144,7 @@ export async function handleCreatePhotoText(
   if (!(await checkBalance(env.DB, userId, cost))) {
     await telegram.sendMessage(
       chatId,
-      `❌ Недостаточно токенов! Требуется: ${cost} (${imageCount} вариантов)\nПополните баланс для продолжения.`,
+      `❌ Недостаточно токенов! Требуется: ${cost} (${imageCount} ${imageCountWord(imageCount)})\nПополните баланс для продолжения.`,
     );
     await clearUserState(env.DB, userId);
     return true;
@@ -202,7 +206,7 @@ export async function handleCreatePhotoImage(
   if (!(await checkBalance(env.DB, userId, cost))) {
     await telegram.sendMessage(
       chatId,
-      `❌ Недостаточно токенов! Требуется: ${cost} (${imageCount} вариантов)\nПополните баланс для продолжения.`,
+      `❌ Недостаточно токенов! Требуется: ${cost} (${imageCount} ${imageCountWord(imageCount)})\nПополните баланс для продолжения.`,
     );
     await clearUserState(env.DB, userId);
     return true;
