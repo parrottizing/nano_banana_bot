@@ -97,14 +97,16 @@ export async function showChangeImageCountMenu(
 ): Promise<void> {
   const current = await getUserImageCount(env.DB, userId);
   const label = (value: number, text: string) => `${text}${current === value ? " ✓" : ""}`;
+  const currentLabel = current === 1 ? "изображение" : "изображений";
 
   await telegram.sendMessage(
     chatId,
-    "⚙️ *Количество изображений*\n\n" +
-      `Сейчас: *${current}* вариант(ов)\n\n` +
-      "• 1 вариант — 25 токенов\n" +
-      "• 2 варианта — 50 токенов\n" +
-      "• 4 варианта — 100 токенов",
+    "⚙️ *Количество изображений за раз*\n\n" +
+      "Чем больше изображений вы генерируете за раз, тем больше шансов получить именно то, что вы хотите.\n\n" +
+      `Сейчас: *${current} ${currentLabel}*\n\n` +
+      "• 1 изображение — 25 токенов\n" +
+      "• 2 изображения — 50 токенов\n" +
+      "• 4 изображения — 100 токенов",
     {
       parse_mode: "Markdown",
       reply_markup: {
