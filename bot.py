@@ -32,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN_TEST")
 LAOZHANG_PER_REQUEST_API_KEY = os.getenv("LAOZHANG_PER_REQUEST_API_KEY")
 LAOZHANG_PER_USE_API_KEY = os.getenv("LAOZHANG_PER_USE_API_KEY")
 
@@ -669,7 +669,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     if not TELEGRAM_TOKEN:
-        print("Error: TELEGRAM_BOT_TOKEN not found check your .env file.")
+        print("Error: TELEGRAM_BOT_TOKEN_TEST not found check your .env file.")
         exit(1)
         
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()

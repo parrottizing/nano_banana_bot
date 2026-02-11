@@ -95,11 +95,14 @@ export async function getMediaGroup(db: D1Database, mediaGroupId: string): Promi
   };
 }
 
-export async function markMediaGroupQueued(db: D1Database, mediaGroupId: string): Promise<void> {
-  await db
-    .prepare("UPDATE media_groups SET status = 'queued', updated_at = CURRENT_TIMESTAMP WHERE media_group_id = ?")
+export async function markMediaGroupQueued(db: D1Database, mediaGroupId: string): Promise<boolean> {
+  const result = await db
+    .prepare(
+      "UPDATE media_groups SET status = 'queued', updated_at = CURRENT_TIMESTAMP WHERE media_group_id = ? AND status = 'collecting'",
+    )
     .bind(mediaGroupId)
     .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 export async function markMediaGroupProcessed(db: D1Database, mediaGroupId: string): Promise<void> {

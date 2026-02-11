@@ -148,6 +148,7 @@ export async function handleCreatePhotoText(
 
   await clearUserState(env.DB, userId);
 
+  const loadingMessage = await telegram.sendMessage(chatId, "🤔");
   await enqueueJob(env, {
     id: makeJobId("create_photo"),
     type: "CREATE_PHOTO_JOB",
@@ -155,9 +156,8 @@ export async function handleCreatePhotoText(
     chatId,
     prompt: text,
     fileIds: [],
+    loadingMessageId: loadingMessage.message_id,
   });
-
-  await telegram.sendMessage(chatId, "🤔 Генерирую изображение...");
   return true;
 }
 
@@ -221,14 +221,18 @@ export async function handleCreatePhotoImage(
       return true;
     }
 
-    await markMediaGroupQueued(env.DB, group.mediaGroupId);
-    await enqueueJob(env, {
-      id: makeJobId("flush_media_group"),
-      type: "FLUSH_MEDIA_GROUP_JOB",
-      telegramUserId: userId,
-      chatId,
-      mediaGroupId: group.mediaGroupId,
-    });
+    const queuedNow = await markMediaGroupQueued(env.DB, group.mediaGroupId);
+    if (queuedNow) {
+      await enqueueJob(env, {
+        id: makeJobId("flush_media_group"),
+        type: "FLUSH_MEDIA_GROUP_JOB",
+        telegramUserId: userId,
+        chatId,
+        mediaGroupId: group.mediaGroupId,
+      }, {
+        delaySeconds: 2,
+      });
+    }
 
     return true;
   }
@@ -244,6 +248,7 @@ export async function handleCreatePhotoImage(
 
   await clearUserState(env.DB, userId);
 
+  const loadingMessage = await telegram.sendMessage(chatId, "🤔");
   await enqueueJob(env, {
     id: makeJobId("create_photo"),
     type: "CREATE_PHOTO_JOB",
@@ -251,8 +256,7 @@ export async function handleCreatePhotoImage(
     chatId,
     prompt: message.caption,
     fileIds: [fileId],
+    loadingMessageId: loadingMessage.message_id,
   });
-
-  await telegram.sendMessage(chatId, "🤔 Генерирую изображение...");
   return true;
 }

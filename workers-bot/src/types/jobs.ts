@@ -15,11 +15,13 @@ export interface CreatePhotoJobPayload extends BaseJobPayload {
   type: "CREATE_PHOTO_JOB";
   prompt: string;
   fileIds: string[];
+  loadingMessageId?: number;
 }
 
 export interface AnalyzeCtrJobPayload extends BaseJobPayload {
   type: "ANALYZE_CTR_JOB";
   fileId: string;
+  loadingMessageId?: number;
 }
 
 export interface ImproveCtrJobPayload extends BaseJobPayload {

@@ -8,6 +8,7 @@ export interface Env {
 
   LAOZHANG_PER_REQUEST_API_KEY: string;
   LAOZHANG_PER_USE_API_KEY: string;
+  LAOZHANG_HTTP_TIMEOUT_MS?: string;
 
   YOOKASSA_SHOP_ID: string;
   YOOKASSA_SECRET_KEY: string;

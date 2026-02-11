@@ -25,6 +25,111 @@ import { buildImprovementPrompt } from "../handlers/improveCtr";
 import { CTR_ENHANCEMENT_PROMPT } from "../handlers/createPhoto";
 import { TOKEN_COSTS } from "../types/domain";
 
+const PHOTO_LOADING_EMOJIS = ["🤔", "💡", "🎨"] as const;
+const CTR_LOADING_EMOJIS = ["🔍", "✍️", "📝"] as const;
+const ANIMATION_STEP_DELAY_MS = 2900;
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function startLoadingAnimation(
+  telegram: TelegramClient,
+  chatId: number,
+  options?: {
+    initialMessageId?: number;
+    emojis?: readonly string[];
+    chatAction?: "typing" | "upload_photo";
+  },
+): Promise<() => Promise<void>> {
+  const emojis = options?.emojis && options.emojis.length > 0 ? options.emojis : PHOTO_LOADING_EMOJIS;
+  const chatAction = options?.chatAction ?? "typing";
+  let messageId = options?.initialMessageId;
+  if (!messageId) {
+    const message = await telegram.sendMessage(chatId, emojis[0]);
+    messageId = message.message_id;
+  }
+
+  let stopped = false;
+  let emojiIndex = 0;
+
+  const loop = (async () => {
+    while (!stopped) {
+      await sleep(ANIMATION_STEP_DELAY_MS);
+      if (stopped) {
+        break;
+      }
+
+      emojiIndex = (emojiIndex + 1) % emojis.length;
+      try {
+        await telegram.editMessageText(chatId, messageId, emojis[emojiIndex]);
+      } catch (error) {
+        console.warn("Failed to update loading emoji", { chatId, messageId, error });
+      }
+
+      try {
+        await telegram.sendChatAction(chatId, chatAction);
+      } catch (error) {
+        console.warn("Failed to send chat action", { chatId, error });
+      }
+    }
+  })();
+
+  return async () => {
+    stopped = true;
+    await loop;
+    try {
+      await telegram.deleteMessage(chatId, messageId);
+    } catch (error) {
+      console.warn("Failed to delete loading message", { chatId, messageId, error });
+    }
+  };
+}
+
+function isMarkdownParseError(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes("can't parse entities");
+}
+
+async function sendMessageWithMarkdownFallback(
+  telegram: TelegramClient,
+  chatId: number,
+  text: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await telegram.sendMessage(chatId, text, { parse_mode: "Markdown", ...extra });
+  } catch (error) {
+    if (!isMarkdownParseError(error)) {
+      throw error;
+    }
+    await telegram.sendMessage(chatId, text, extra);
+  }
+}
+
+async function sendLongMessageWithMarkdownFallback(
+  telegram: TelegramClient,
+  chatId: number,
+  text: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  if (text.length <= TELEGRAM_MESSAGE_LIMIT) {
+    await sendMessageWithMarkdownFallback(telegram, chatId, text, extra);
+    return;
+  }
+
+  for (let offset = 0; offset < text.length; offset += TELEGRAM_MESSAGE_LIMIT) {
+    const chunk = text.slice(offset, offset + TELEGRAM_MESSAGE_LIMIT);
+    const isLastChunk = offset + TELEGRAM_MESSAGE_LIMIT >= text.length;
+    await sendMessageWithMarkdownFallback(
+      telegram,
+      chatId,
+      chunk,
+      isLastChunk ? extra : {},
+    );
+  }
+}
+
 async function fileIdsToBase64(telegram: TelegramClient, laozhang: LaoZhangService, fileIds: string[]): Promise<string[]> {
   const images: string[] = [];
   for (const fileId of fileIds) {
@@ -64,107 +169,179 @@ async function sendGeneratedImages(
   );
 }
 
+async function generateImagesInParallel(
+  laozhang: LaoZhangService,
+  prompt: string,
+  inputImages: string[],
+  targetCount: number,
+): Promise<string[]> {
+  const tasks = Array.from({ length: targetCount }, (_, index) =>
+    laozhang
+      .generateImage({
+        prompt,
+        imageBase64: inputImages.length ? inputImages : undefined,
+        aspectRatio: "3:4",
+        imageSize: "2K",
+      })
+      .then((image) => ({ index, image }))
+      .catch((error) => {
+        console.error("Image generation attempt failed", { index, error });
+        return { index, image: null as string | null };
+      }),
+  );
+
+  const results = await Promise.all(tasks);
+  return results
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.image)
+    .filter((image): image is string => Boolean(image));
+}
+
 async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Promise<void> {
   const telegram = new TelegramClient(env);
   const laozhang = new LaoZhangService(env);
+  let stopLoadingAnimation: (() => Promise<void>) | null = null;
 
-  const inputImages = await fileIdsToBase64(telegram, laozhang, payload.fileIds);
-  const wantsCtr = inputImages.length > 0 ? await laozhang.classifyCtrIntent(payload.prompt) : false;
-
-  let prompt = payload.prompt;
-  if (wantsCtr) {
-    prompt += CTR_ENHANCEMENT_PROMPT;
-  }
-
-  const targetCount = await getUserImageCount(env.DB, payload.telegramUserId);
-
-  const outputs: string[] = [];
-  for (let i = 0; i < targetCount; i += 1) {
-    const image = await laozhang.generateImage({
-      prompt,
-      imageBase64: inputImages.length ? inputImages : undefined,
-      aspectRatio: "3:4",
-      imageSize: "2K",
+  try {
+    stopLoadingAnimation = await startLoadingAnimation(telegram, payload.chatId, {
+      initialMessageId: payload.loadingMessageId,
+      emojis: PHOTO_LOADING_EMOJIS,
+      chatAction: "upload_photo",
     });
-    if (image) {
-      outputs.push(image);
-    }
-  }
 
-  if (!outputs.length) {
-    await telegram.sendMessage(payload.chatId, "❌ Не удалось сгенерировать изображения.");
+    const inputImages = await fileIdsToBase64(telegram, laozhang, payload.fileIds);
+    let wantsCtr = false;
+    if (inputImages.length > 0) {
+      try {
+        wantsCtr = await laozhang.classifyCtrIntent(payload.prompt);
+      } catch (error) {
+        console.error("CTR intent classification failed, continuing without enhancement", { error });
+      }
+    }
+
+    let prompt = payload.prompt;
+    if (wantsCtr) {
+      prompt += CTR_ENHANCEMENT_PROMPT;
+    }
+
+    const targetCount = await getUserImageCount(env.DB, payload.telegramUserId);
+    const outputs = await generateImagesInParallel(laozhang, prompt, inputImages, targetCount);
+
+    if (stopLoadingAnimation) {
+      await stopLoadingAnimation();
+      stopLoadingAnimation = null;
+    }
+
+    if (!outputs.length) {
+      await telegram.sendMessage(
+        payload.chatId,
+        "❌ Не удалось сгенерировать изображения. Попробуйте снова чуть позже или выберите 1 вариант генерации.",
+      );
+      await logConversation(env.DB, {
+        telegramUserId: payload.telegramUserId,
+        feature: "create_photo",
+        messageType: "error",
+        content: "no generated images",
+        success: false,
+      });
+      return;
+    }
+
+    await sendGeneratedImages(telegram, payload.chatId, outputs);
+    if (outputs.length < targetCount) {
+      await telegram.sendMessage(
+        payload.chatId,
+        `⚠️ Получилось сгенерировать ${outputs.length} из ${targetCount} вариантов. Попробуйте повторить для остальных.`,
+      );
+    }
+
+    const actualCost = TOKEN_COSTS.create_photo * outputs.length;
+    await updateUserBalance(env.DB, payload.telegramUserId, -actualCost);
+
     await logConversation(env.DB, {
       telegramUserId: payload.telegramUserId,
       feature: "create_photo",
-      messageType: "error",
-      content: "no generated images",
-      success: false,
+      messageType: "bot_image_generated",
+      content: payload.prompt,
+      imageCount: outputs.length,
+      tokensUsed: actualCost,
+      success: true,
     });
-    return;
+  } finally {
+    if (stopLoadingAnimation) {
+      await stopLoadingAnimation();
+    }
   }
-
-  await sendGeneratedImages(telegram, payload.chatId, outputs);
-
-  const actualCost = TOKEN_COSTS.create_photo * outputs.length;
-  await updateUserBalance(env.DB, payload.telegramUserId, -actualCost);
-
-  await logConversation(env.DB, {
-    telegramUserId: payload.telegramUserId,
-    feature: "create_photo",
-    messageType: "bot_image_generated",
-    content: payload.prompt,
-    imageCount: outputs.length,
-    tokensUsed: actualCost,
-    success: true,
-  });
 }
 
 async function processAnalyzeCtr(env: Env, payload: AnalyzeCtrJobPayload): Promise<void> {
   const telegram = new TelegramClient(env);
   const laozhang = new LaoZhangService(env);
+  let stopLoadingAnimation: (() => Promise<void>) | null = null;
 
-  const [imageBase64] = await fileIdsToBase64(telegram, laozhang, [payload.fileId]);
-  const analysis = await laozhang.generateText({
-    prompt: CTR_ANALYSIS_PROMPT,
-    imageBase64: [imageBase64],
-    model: TEXT_MODEL,
-  });
+  try {
+    stopLoadingAnimation = await startLoadingAnimation(telegram, payload.chatId, {
+      initialMessageId: payload.loadingMessageId,
+      emojis: CTR_LOADING_EMOJIS,
+      chatAction: "typing",
+    });
 
-  if (!analysis) {
-    await telegram.sendMessage(payload.chatId, "❌ Не удалось проанализировать изображение. Попробуйте другое фото.");
+    const [imageBase64] = await fileIdsToBase64(telegram, laozhang, [payload.fileId]);
+    const analysis = await laozhang.generateText({
+      prompt: CTR_ANALYSIS_PROMPT,
+      imageBase64: [imageBase64],
+      model: TEXT_MODEL,
+    });
+
+    if (stopLoadingAnimation) {
+      await stopLoadingAnimation();
+      stopLoadingAnimation = null;
+    }
+
+    if (!analysis) {
+      await telegram.sendMessage(payload.chatId, "❌ Не удалось проанализировать изображение. Попробуйте другое фото.");
+      await logConversation(env.DB, {
+        telegramUserId: payload.telegramUserId,
+        feature: "analyze_ctr",
+        messageType: "error",
+        content: "empty ctr analysis",
+        success: false,
+      });
+      return;
+    }
+
+    const resultText = `📊 *Результат анализа CTR:*\n\n${analysis}`;
+    await sendLongMessageWithMarkdownFallback(
+      telegram,
+      payload.chatId,
+      resultText,
+      {
+        reply_markup: {
+          inline_keyboard: [[{ text: "🚀 Улучшить CTR с Nano Banana", callback_data: "improve_ctr" }]],
+        },
+      },
+    );
+
+    await setUserState(env.DB, payload.telegramUserId, "ctr_improvement", "ready_to_improve", {
+      image_file_id: payload.fileId,
+      recommendations: analysis,
+    });
+
+    await updateUserBalance(env.DB, payload.telegramUserId, -TOKEN_COSTS.analyze_ctr);
+
     await logConversation(env.DB, {
       telegramUserId: payload.telegramUserId,
       feature: "analyze_ctr",
-      messageType: "error",
-      content: "empty ctr analysis",
-      success: false,
+      messageType: "bot_response",
+      content: resultText,
+      tokensUsed: TOKEN_COSTS.analyze_ctr,
+      success: true,
     });
-    return;
+  } finally {
+    if (stopLoadingAnimation) {
+      await stopLoadingAnimation();
+    }
   }
-
-  const resultText = `📊 *Результат анализа CTR:*\n\n${analysis}`;
-  await telegram.sendMessage(payload.chatId, resultText, {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [[{ text: "🚀 Улучшить CTR с Nano Banana", callback_data: "improve_ctr" }]],
-    },
-  });
-
-  await setUserState(env.DB, payload.telegramUserId, "ctr_improvement", "ready_to_improve", {
-    image_file_id: payload.fileId,
-    recommendations: analysis,
-  });
-
-  await updateUserBalance(env.DB, payload.telegramUserId, -TOKEN_COSTS.analyze_ctr);
-
-  await logConversation(env.DB, {
-    telegramUserId: payload.telegramUserId,
-    feature: "analyze_ctr",
-    messageType: "bot_response",
-    content: resultText,
-    tokensUsed: TOKEN_COSTS.analyze_ctr,
-    success: true,
-  });
 }
 
 async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promise<void> {

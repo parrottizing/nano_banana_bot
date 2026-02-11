@@ -10,6 +10,7 @@ import type {
 } from "../types/providers";
 
 const BASE_URL = "https://api.laozhang.ai/v1beta/models";
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 
 function toBase64(buffer: ArrayBuffer): string {
   let binary = "";
@@ -36,15 +37,42 @@ function buildParts(prompt: string, imageBase64?: string[]): Array<{ text?: stri
   return parts;
 }
 
-async function request<T>(url: string, apiKey: string, payload: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+function parseTimeoutMs(rawValue: string | undefined): number {
+  if (!rawValue) {
+    return DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
+  return Math.floor(parsed);
+}
+
+async function request<T>(url: string, apiKey: string, payload: unknown, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && error.name === "AbortError")) {
+      throw new Error(`LaoZhang request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     const text = await res.text();
@@ -56,6 +84,10 @@ async function request<T>(url: string, apiKey: string, payload: unknown): Promis
 
 export class LaoZhangService {
   constructor(private readonly env: Env) {}
+
+  private getRequestTimeoutMs(): number {
+    return parseTimeoutMs(this.env.LAOZHANG_HTTP_TIMEOUT_MS);
+  }
 
   arrayBufferToBase64(buffer: ArrayBuffer): string {
     return toBase64(buffer);
@@ -77,6 +109,7 @@ export class LaoZhangService {
       `${BASE_URL}/${req.model ?? IMAGE_MODEL}:generateContent`,
       this.env.LAOZHANG_PER_REQUEST_API_KEY,
       payload,
+      this.getRequestTimeoutMs(),
     );
 
     const imageData =
@@ -104,6 +137,7 @@ export class LaoZhangService {
       `${BASE_URL}/${req.model ?? TEXT_MODEL}:generateContent`,
       this.env.LAOZHANG_PER_USE_API_KEY,
       payload,
+      this.getRequestTimeoutMs(),
     );
 
     const text = (result as any)?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;

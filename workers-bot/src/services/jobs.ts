@@ -12,7 +12,7 @@ export function makeJobId(prefix: string): string {
   return `${prefix}_${randomId()}`;
 }
 
-export async function enqueueJob(env: Env, payload: JobPayload): Promise<void> {
+export async function enqueueJob(env: Env, payload: JobPayload, options?: QueueSendOptions): Promise<void> {
   await insertJob(env.DB, payload);
-  await env.BOT_JOBS.send(payload);
+  await env.BOT_JOBS.send(payload, options);
 }

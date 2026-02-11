@@ -1,5 +1,5 @@
 import type { Env } from "../types/env";
-import type { TelegramFileResponse } from "../types/telegram";
+import type { TelegramFileResponse, TelegramMessage } from "../types/telegram";
 
 function telegramUrl(token: string, method: string): string {
   return `https://api.telegram.org/bot${token}/${method}`;
@@ -61,11 +61,34 @@ export class TelegramClient {
     });
   }
 
-  async sendMessage(chatId: number, text: string, extra: Record<string, unknown> = {}): Promise<void> {
-    await this.callJson("sendMessage", {
+  async sendMessage(chatId: number, text: string, extra: Record<string, unknown> = {}): Promise<TelegramMessage> {
+    return this.callJson("sendMessage", {
       chat_id: chatId,
       text,
       ...extra,
+    });
+  }
+
+  async editMessageText(chatId: number, messageId: number, text: string, extra: Record<string, unknown> = {}): Promise<void> {
+    await this.callJson("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      ...extra,
+    });
+  }
+
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    await this.callJson("deleteMessage", {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  }
+
+  async sendChatAction(chatId: number, action: "typing" | "upload_photo" = "typing"): Promise<void> {
+    await this.callJson("sendChatAction", {
+      chat_id: chatId,
+      action,
     });
   }
 

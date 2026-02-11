@@ -100,8 +100,7 @@ export async function handleAnalyzeCtrPhoto(
     telegramUserId: userId,
     chatId,
     fileId,
+    loadingMessageId: (await telegram.sendMessage(chatId, "🔍")).message_id,
   });
-
-  await telegram.sendMessage(chatId, "🔍 Анализирую карточку...");
   return true;
 }
