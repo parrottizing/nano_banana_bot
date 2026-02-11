@@ -55,6 +55,7 @@ async function startLoadingAnimation(
   chatId: number,
   options?: {
     initialMessageId?: number;
+    initialMessageSentAtMs?: number;
     emojis?: readonly string[];
     chatAction?: "typing" | "upload_photo";
   },
@@ -81,10 +82,20 @@ async function startLoadingAnimation(
 
   let stopped = false;
   let emojiIndex = 0;
+  let delayBeforeNextStepMs = ANIMATION_STEP_DELAY_MS;
+
+  if (typeof options?.initialMessageSentAtMs === "number") {
+    const elapsedMs = Date.now() - options.initialMessageSentAtMs;
+    if (Number.isFinite(elapsedMs) && elapsedMs > 0) {
+      delayBeforeNextStepMs = Math.max(0, ANIMATION_STEP_DELAY_MS - elapsedMs);
+    }
+  }
 
   const loop = (async () => {
     while (!stopped) {
-      await sleep(ANIMATION_STEP_DELAY_MS);
+      if (delayBeforeNextStepMs > 0) {
+        await sleep(delayBeforeNextStepMs);
+      }
       if (stopped) {
         break;
       }
@@ -110,6 +121,8 @@ async function startLoadingAnimation(
       } catch (error) {
         console.warn("Failed to send chat action", { chatId, error });
       }
+
+      delayBeforeNextStepMs = ANIMATION_STEP_DELAY_MS;
     }
   })();
 
@@ -245,6 +258,7 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
   try {
     stopLoadingAnimation = await startLoadingAnimation(telegram, payload.chatId, {
       initialMessageId: payload.loadingMessageId,
+      initialMessageSentAtMs: payload.loadingMessageSentAtMs,
       emojis: PHOTO_LOADING_EMOJIS,
       chatAction: "upload_photo",
     });
@@ -322,6 +336,7 @@ async function processAnalyzeCtr(env: Env, payload: AnalyzeCtrJobPayload): Promi
   try {
     stopLoadingAnimation = await startLoadingAnimation(telegram, payload.chatId, {
       initialMessageId: payload.loadingMessageId,
+      initialMessageSentAtMs: payload.loadingMessageSentAtMs,
       emojis: CTR_LOADING_EMOJIS,
       chatAction: "typing",
     });
@@ -392,6 +407,7 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
   try {
     stopLoadingAnimation = await startLoadingAnimation(telegram, payload.chatId, {
       initialMessageId: payload.loadingMessageId,
+      initialMessageSentAtMs: payload.loadingMessageSentAtMs,
       emojis: IMPROVE_LOADING_EMOJIS,
       chatAction: "upload_photo",
     });

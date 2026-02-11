@@ -157,6 +157,7 @@ export async function handleCreatePhotoText(
     prompt: text,
     fileIds: [],
     loadingMessageId: loadingMessage.message_id,
+    loadingMessageSentAtMs: Date.now(),
   });
   return true;
 }
@@ -257,6 +258,7 @@ export async function handleCreatePhotoImage(
     prompt: message.caption,
     fileIds: [fileId],
     loadingMessageId: loadingMessage.message_id,
+    loadingMessageSentAtMs: Date.now(),
   });
   return true;
 }

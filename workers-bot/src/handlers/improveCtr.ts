@@ -68,5 +68,6 @@ export async function startImproveCtr(env: Env, telegram: TelegramClient, userId
     sourceFileId,
     recommendations,
     loadingMessageId: loadingMessage.message_id,
+    loadingMessageSentAtMs: Date.now(),
   });
 }

@@ -16,12 +16,14 @@ export interface CreatePhotoJobPayload extends BaseJobPayload {
   prompt: string;
   fileIds: string[];
   loadingMessageId?: number;
+  loadingMessageSentAtMs?: number;
 }
 
 export interface AnalyzeCtrJobPayload extends BaseJobPayload {
   type: "ANALYZE_CTR_JOB";
   fileId: string;
   loadingMessageId?: number;
+  loadingMessageSentAtMs?: number;
 }
 
 export interface ImproveCtrJobPayload extends BaseJobPayload {
@@ -29,6 +31,7 @@ export interface ImproveCtrJobPayload extends BaseJobPayload {
   sourceFileId: string;
   recommendations: string;
   loadingMessageId?: number;
+  loadingMessageSentAtMs?: number;
 }
 
 export interface FlushMediaGroupJobPayload extends BaseJobPayload {

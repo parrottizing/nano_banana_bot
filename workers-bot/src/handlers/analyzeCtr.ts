@@ -94,13 +94,15 @@ export async function handleAnalyzeCtrPhoto(
     imageCount: 1,
   });
 
+  const loadingMessage = await telegram.sendMessage(chatId, "🔍");
   await enqueueJob(env, {
     id: makeJobId("analyze_ctr"),
     type: "ANALYZE_CTR_JOB",
     telegramUserId: userId,
     chatId,
     fileId,
-    loadingMessageId: (await telegram.sendMessage(chatId, "🔍")).message_id,
+    loadingMessageId: loadingMessage.message_id,
+    loadingMessageSentAtMs: Date.now(),
   });
   return true;
 }
