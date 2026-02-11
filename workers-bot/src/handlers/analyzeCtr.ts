@@ -13,7 +13,100 @@ import { TelegramClient } from "../telegram/client";
 import type { TelegramMessage } from "../types/telegram";
 import { enqueueJob, makeJobId } from "../services/jobs";
 
-export const CTR_ANALYSIS_PROMPT = `Ты эксперт по маркетплейсам (Wildberries, Ozon, Яндекс.Маркет) и визуальному дизайну карточек товаров.\n\nПроанализируй эту карточку товара или скриншот с маркетплейса и оцени её потенциал для высокого CTR (кликабельности).\n\nДай детальный анализ по критериям и рекомендации.\n\nНЕ начинай с приветствий.`;
+export const CTR_ANALYSIS_PROMPT = `Ты эксперт по маркетплейсам (Wildberries, Ozon, Яндекс.Маркет) и визуальному дизайну карточек товаров.
+
+Проанализируй эту карточку товара или скриншот с маркетплейса и оцени её потенциал для высокого CTR (кликабельности).
+
+Дай детальный анализ по следующим критериям:
+
+📊 ОБЩАЯ ОЦЕНКА CTR: X/10
+
+🎯 ЧТО РАБОТАЕТ ХОРОШО:
+• [перечисли сильные стороны карточки]
+
+⚠️ ЧТО НУЖНО УЛУЧШИТЬ:
+• [перечисли слабые места]
+
+💡 КОНКРЕТНЫЕ РЕКОМЕНДАЦИИ:
+1. [рекомендация 1]
+2. [рекомендация 2]
+3. [рекомендация 3]
+
+Оценивай:
+• Читаемость и размер заголовка/названия товара
+• Видимость и презентация самого товара
+• Цветовая гамма и контраст
+• Наличие УТП (скидки, бесплатная доставка, и т.д.)
+• Качество изображения
+• Соответствие трендам маркетплейсов
+• Информативность (цена, цвета, размеры)
+
+Будь конкретным и практичным в рекомендациях.
+
+НЕ начинай ответ с приветствий типа "Привет!" — сразу переходи к анализу.
+
+ВАЖНО - Правила форматирования для Telegram:
+• Используй *одинарные звёздочки* для жирного текста
+• Используй _нижние подчёркивания_ для курсива
+• НЕ используй ** (двойные звёздочки)
+• НЕ используй # для заголовков
+• НЕ используй --- для разделителей
+• НЕ используй - для списков, используй • или числа
+• Эмодзи можно использовать свободно`;
+
+function normalizeCtrLine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^([-*_])\1{2,}$/.test(trimmed)) {
+    return "";
+  }
+
+  const headingMatch = trimmed.match(/^#{1,6}\s*(.+)$/);
+  if (headingMatch) {
+    return `*${headingMatch[1].trim()}*`;
+  }
+
+  if (/^[-–—]\s+/.test(trimmed)) {
+    return `• ${trimmed.replace(/^[-–—]\s+/, "")}`;
+  }
+
+  if (/^[*+]\s+/.test(trimmed)) {
+    return `• ${trimmed.replace(/^[*+]\s+/, "")}`;
+  }
+
+  return line;
+}
+
+export function normalizeCtrAnalysisForTelegram(text: string): string {
+  const normalizedLines = text
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .map(normalizeCtrLine);
+
+  return normalizedLines
+    .join("\n")
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function stripCtrMarkdownForPlainText(text: string): string {
+  return text
+    .replaceAll("\r\n", "\n")
+    .replace(/^\s*#{1,6}\s*/gm, "")
+    .replace(/^\s*([-*_])\1{2,}\s*$/gm, "")
+    .replace(/^\s*[*+-]\s+/gm, "• ")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+    .replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 export async function analyzeCtrEntry(env: Env, telegram: TelegramClient, userId: number, chatId: number): Promise<void> {
   await getOrCreateUser(env.DB, userId);

@@ -28,7 +28,11 @@ import {
   getEmojiHoldDelayMs,
   getInitialEmojiDelayMs,
 } from "./loadingAnimation";
-import { CTR_ANALYSIS_PROMPT } from "../handlers/analyzeCtr";
+import {
+  CTR_ANALYSIS_PROMPT,
+  normalizeCtrAnalysisForTelegram,
+  stripCtrMarkdownForPlainText,
+} from "../handlers/analyzeCtr";
 import { buildImprovementPrompt } from "../handlers/improveCtr";
 import { CTR_ENHANCEMENT_PROMPT } from "../handlers/createPhoto";
 import { TOKEN_COSTS } from "../types/domain";
@@ -159,46 +163,21 @@ async function startLoadingAnimation(
   };
 }
 
-function isMarkdownParseError(error: unknown): boolean {
-  return error instanceof Error && error.message.toLowerCase().includes("can't parse entities");
-}
-
-async function sendMessageWithMarkdownFallback(
-  telegram: TelegramClient,
-  chatId: number,
-  text: string,
-  extra: Record<string, unknown> = {},
-): Promise<void> {
-  try {
-    await telegram.sendMessage(chatId, text, { parse_mode: "Markdown", ...extra });
-  } catch (error) {
-    if (!isMarkdownParseError(error)) {
-      throw error;
-    }
-    await telegram.sendMessage(chatId, text, extra);
-  }
-}
-
-async function sendLongMessageWithMarkdownFallback(
+async function sendLongPlainMessage(
   telegram: TelegramClient,
   chatId: number,
   text: string,
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   if (text.length <= TELEGRAM_MESSAGE_LIMIT) {
-    await sendMessageWithMarkdownFallback(telegram, chatId, text, extra);
+    await telegram.sendMessage(chatId, text, extra);
     return;
   }
 
   for (let offset = 0; offset < text.length; offset += TELEGRAM_MESSAGE_LIMIT) {
     const chunk = text.slice(offset, offset + TELEGRAM_MESSAGE_LIMIT);
     const isLastChunk = offset + TELEGRAM_MESSAGE_LIMIT >= text.length;
-    await sendMessageWithMarkdownFallback(
-      telegram,
-      chatId,
-      chunk,
-      isLastChunk ? extra : {},
-    );
+    await telegram.sendMessage(chatId, chunk, isLastChunk ? extra : {});
   }
 }
 
@@ -384,8 +363,10 @@ async function processAnalyzeCtr(env: Env, payload: AnalyzeCtrJobPayload): Promi
       return;
     }
 
-    const resultText = `📊 *Результат анализа CTR:*\n\n${analysis}`;
-    await sendLongMessageWithMarkdownFallback(
+    const normalizedAnalysis = normalizeCtrAnalysisForTelegram(analysis);
+    const cleanAnalysis = stripCtrMarkdownForPlainText(normalizedAnalysis);
+    const resultText = `📊 Результат анализа CTR:\n\n${cleanAnalysis}`;
+    await sendLongPlainMessage(
       telegram,
       payload.chatId,
       resultText,
@@ -398,7 +379,7 @@ async function processAnalyzeCtr(env: Env, payload: AnalyzeCtrJobPayload): Promi
 
     await setUserState(env.DB, payload.telegramUserId, "ctr_improvement", "ready_to_improve", {
       image_file_id: payload.fileId,
-      recommendations: analysis,
+      recommendations: normalizedAnalysis,
     });
 
     await updateUserBalance(env.DB, payload.telegramUserId, -TOKEN_COSTS.analyze_ctr);
