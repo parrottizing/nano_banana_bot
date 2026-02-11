@@ -428,6 +428,10 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
     }
 
     if (!image) {
+      await setUserState(env.DB, payload.telegramUserId, "ctr_improvement", "ready_to_improve", {
+        image_file_id: payload.sourceFileId,
+        recommendations: payload.recommendations,
+      });
       await telegram.sendMessage(payload.chatId, "❌ Ошибка при улучшении изображения.");
       await logConversation(env.DB, {
         telegramUserId: payload.telegramUserId,
@@ -441,6 +445,7 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
 
     await sendGeneratedImages(telegram, payload.chatId, [image]);
     await updateUserBalance(env.DB, payload.telegramUserId, -TOKEN_COSTS.create_photo);
+    await clearUserState(env.DB, payload.telegramUserId);
 
     await logConversation(env.DB, {
       telegramUserId: payload.telegramUserId,

@@ -6,6 +6,7 @@ import { handleYooKassaWebhook } from "./handlers/payments";
 import { processQueueMessage } from "./services/queueProcessor";
 import type { JobPayload } from "./types/jobs";
 import { TelegramClient } from "./telegram/client";
+import { setUserState } from "./db/repositories";
 
 const app = new Hono<{ Bindings: Env }>();
 const MAX_QUEUE_RETRIES = 3;
@@ -47,9 +48,56 @@ async function notifyQueueFailure(env: Env, payload: JobPayload, error: unknown)
   } else if (payload.type === "ANALYZE_CTR_JOB") {
     text = "❌ Не удалось выполнить анализ CTR. Попробуйте снова чуть позже.";
   }
+  if (payload.type === "IMPROVE_CTR_JOB") {
+    text += "\n\nНажмите «Улучшить CTR с Nano Banana» еще раз.";
+  }
+
+  if (payload.type === "IMPROVE_CTR_JOB") {
+    await setUserState(env.DB, payload.telegramUserId, "ctr_improvement", "ready_to_improve", {
+      image_file_id: payload.sourceFileId,
+      recommendations: payload.recommendations,
+    });
+  }
 
   console.error("Final queue failure", { id: payload.id, type: payload.type, reason });
-  await telegram.sendMessage(payload.chatId, text);
+  try {
+    await telegram.sendMessage(payload.chatId, text);
+  } catch (notifyError) {
+    console.error("Failed to notify user about queue failure", {
+      id: payload.id,
+      type: payload.type,
+      notifyError,
+    });
+  }
+}
+
+async function notifyQueueRetry(
+  env: Env,
+  payload: JobPayload,
+  attempts: number,
+  error: unknown,
+): Promise<void> {
+  const telegram = new TelegramClient(env);
+  const reason = error instanceof Error ? error.message : String(error);
+  const nextAttempt = attempts + 1;
+
+  let text = `⚠️ Временная ошибка. Повторяем автоматически (попытка ${nextAttempt} из ${MAX_QUEUE_RETRIES}).`;
+  if (payload.type === "CREATE_PHOTO_JOB" || payload.type === "IMPROVE_CTR_JOB") {
+    text = `⚠️ Временная ошибка генерации. Повторяем автоматически (попытка ${nextAttempt} из ${MAX_QUEUE_RETRIES}).`;
+  } else if (payload.type === "ANALYZE_CTR_JOB") {
+    text = `⚠️ Временная ошибка анализа CTR. Повторяем автоматически (попытка ${nextAttempt} из ${MAX_QUEUE_RETRIES}).`;
+  }
+
+  try {
+    await telegram.sendMessage(payload.chatId, text);
+  } catch (notifyError) {
+    console.error("Failed to notify user about queue retry", {
+      id: payload.id,
+      type: payload.type,
+      reason,
+      notifyError,
+    });
+  }
 }
 
 app.get("/healthz", (c) => c.json({ ok: true, service: "nano-banana-workers-bot" }));
@@ -89,6 +137,7 @@ export default {
 
         console.error("Queue job failed", { id: message.body?.id, attempts, retryable, error });
         if (retryable && attempts < MAX_QUEUE_RETRIES) {
+          await notifyQueueRetry(env, message.body, attempts, error);
           const delaySeconds = Math.min(30 * (2 ** (attempts - 1)), 300);
           message.retry({ delaySeconds });
           continue;
