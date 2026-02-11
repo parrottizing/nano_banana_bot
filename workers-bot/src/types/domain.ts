@@ -21,7 +21,7 @@ export const PAYMENT_PACKAGES: Record<string, { rub: number; balance: number }> 
 
 export const PAYMENT_PACKAGE_ORDER = ["100", "300", "1000", "3000", "5000"];
 
-export const MAX_IMAGES = 5;
+export const MAX_IMAGES = 6;
 export const MAX_IMAGE_SIZE_BYTES = 7 * 1024 * 1024;
 
 export const IMAGE_MODEL = "gemini-3-pro-image-preview";

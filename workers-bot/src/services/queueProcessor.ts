@@ -6,6 +6,8 @@ import {
   markJobDone,
   markJobFailed,
   markJobRunning,
+  markMediaGroupCollecting,
+  markMediaGroupProcessingIfAvailable,
   markMediaGroupProcessed,
   setUserState,
   updateUserBalance,
@@ -20,6 +22,7 @@ import type {
 } from "../types/jobs";
 import { TelegramClient } from "../telegram/client";
 import { LaoZhangService, TEXT_MODEL } from "./laozhang";
+import { enqueueJob, makeJobId } from "./jobs";
 import { CTR_ANALYSIS_PROMPT } from "../handlers/analyzeCtr";
 import { buildImprovementPrompt } from "../handlers/improveCtr";
 import { CTR_ENHANCEMENT_PROMPT } from "../handlers/createPhoto";
@@ -30,9 +33,20 @@ const CTR_LOADING_EMOJIS = ["🔍", "✍️", "📝"] as const;
 const IMPROVE_LOADING_EMOJIS = PHOTO_LOADING_EMOJIS;
 const ANIMATION_STEP_DELAY_MS = 2900;
 const TELEGRAM_MESSAGE_LIMIT = 4096;
+const MEDIA_GROUP_SETTLE_WINDOW_MS = 3500;
+const MEDIA_GROUP_RETRY_DELAY_SECONDS = 2;
+const MEDIA_GROUP_STALE_PROCESSING_SECONDS = 120;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseSqlTimestampMs(timestamp: string): number | null {
+  const normalized = timestamp.includes("T")
+    ? timestamp
+    : `${timestamp.replace(" ", "T")}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isMessageNotFoundError(error: unknown): boolean {
@@ -289,7 +303,7 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
     if (!outputs.length) {
       await telegram.sendMessage(
         payload.chatId,
-        "❌ Не удалось сгенерировать изображения. Попробуйте снова чуть позже или выберите 1 вариант генерации.",
+        "❌ Не удалось сгенерировать изображения. Попробуйте снова чуть позже.",
       );
       await logConversation(env.DB, {
         telegramUserId: payload.telegramUserId,
@@ -461,8 +475,8 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
 async function processFlushMediaGroup(env: Env, payload: FlushMediaGroupJobPayload): Promise<void> {
   const telegram = new TelegramClient(env);
 
-  const mediaGroup = await getMediaGroup(env.DB, payload.mediaGroupId);
-  if (!mediaGroup || mediaGroup.status === "processed") {
+  let mediaGroup = await getMediaGroup(env.DB, payload.mediaGroupId);
+  if (!mediaGroup) {
     return;
   }
 
@@ -476,16 +490,70 @@ async function processFlushMediaGroup(env: Env, payload: FlushMediaGroupJobPaylo
     return;
   }
 
-  await markMediaGroupProcessed(env.DB, payload.mediaGroupId);
+  const updatedAtMs = parseSqlTimestampMs(mediaGroup.updatedAt);
+  if (updatedAtMs !== null && Date.now() - updatedAtMs < MEDIA_GROUP_SETTLE_WINDOW_MS) {
+    await enqueueJob(env, {
+      id: makeJobId("flush_media_group"),
+      type: "FLUSH_MEDIA_GROUP_JOB",
+      telegramUserId: payload.telegramUserId,
+      chatId: payload.chatId,
+      mediaGroupId: payload.mediaGroupId,
+    }, {
+      delaySeconds: MEDIA_GROUP_RETRY_DELAY_SECONDS,
+    });
+    return;
+  }
 
-  await processCreatePhoto(env, {
-    id: payload.id,
-    type: "CREATE_PHOTO_JOB",
-    telegramUserId: payload.telegramUserId,
-    chatId: payload.chatId,
-    prompt: mediaGroup.caption,
-    fileIds: mediaGroup.fileIds,
-  });
+  const claimed = await markMediaGroupProcessingIfAvailable(
+    env.DB,
+    payload.mediaGroupId,
+    MEDIA_GROUP_STALE_PROCESSING_SECONDS,
+  );
+  if (!claimed) {
+    mediaGroup = await getMediaGroup(env.DB, payload.mediaGroupId);
+    if (mediaGroup?.status === "processing") {
+      await enqueueJob(env, {
+        id: makeJobId("flush_media_group"),
+        type: "FLUSH_MEDIA_GROUP_JOB",
+        telegramUserId: payload.telegramUserId,
+        chatId: payload.chatId,
+        mediaGroupId: payload.mediaGroupId,
+      }, {
+        delaySeconds: MEDIA_GROUP_RETRY_DELAY_SECONDS,
+      });
+    }
+    return;
+  }
+
+  let loadingMessageId: number | undefined;
+
+  try {
+    const loadingMessage = await telegram.sendMessage(payload.chatId, PHOTO_LOADING_EMOJIS[0]);
+    loadingMessageId = loadingMessage.message_id;
+
+    await enqueueJob(env, {
+      id: makeJobId("create_photo"),
+      type: "CREATE_PHOTO_JOB",
+      telegramUserId: payload.telegramUserId,
+      chatId: payload.chatId,
+      prompt: mediaGroup.caption,
+      fileIds: mediaGroup.fileIds,
+      loadingMessageId,
+      loadingMessageSentAtMs: Date.now(),
+    });
+
+    await markMediaGroupProcessed(env.DB, payload.mediaGroupId);
+  } catch (error) {
+    await markMediaGroupCollecting(env.DB, payload.mediaGroupId);
+    if (typeof loadingMessageId === "number") {
+      try {
+        await telegram.deleteMessage(payload.chatId, loadingMessageId);
+      } catch (deleteError) {
+        console.warn("Failed to delete media-group loading message", { chatId: payload.chatId, loadingMessageId, deleteError });
+      }
+    }
+    throw error;
+  }
 }
 
 export async function processQueueMessage(env: Env, payload: JobPayload): Promise<void> {

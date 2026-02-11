@@ -1,6 +1,8 @@
 import type { Env } from "../types/env";
 import type { TelegramFileResponse, TelegramMessage } from "../types/telegram";
 
+const DEFAULT_TELEGRAM_TIMEOUT_MS = 45_000;
+
 function telegramUrl(token: string, method: string): string {
   return `https://api.telegram.org/bot${token}/${method}`;
 }
@@ -27,8 +29,40 @@ interface TelegramApiResponse<T> {
 export class TelegramClient {
   constructor(private readonly env: Env) {}
 
+  private getTimeoutMs(): number {
+    const raw = this.env.TELEGRAM_HTTP_TIMEOUT_MS;
+    if (!raw) {
+      return DEFAULT_TELEGRAM_TIMEOUT_MS;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return DEFAULT_TELEGRAM_TIMEOUT_MS;
+    }
+    return Math.floor(parsed);
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutMs = this.getTimeoutMs();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (
+        (error instanceof DOMException && error.name === "AbortError")
+        || (error instanceof Error && error.name === "AbortError")
+      ) {
+        throw new Error(`Telegram request timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async callJson<T>(method: string, payload: unknown): Promise<T> {
-    const res = await fetch(telegramUrl(this.env.TELEGRAM_BOT_TOKEN, method), {
+    const res = await this.fetchWithTimeout(telegramUrl(this.env.TELEGRAM_BOT_TOKEN, method), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -42,7 +76,7 @@ export class TelegramClient {
   }
 
   private async callFormData<T>(method: string, formData: FormData): Promise<T> {
-    const res = await fetch(telegramUrl(this.env.TELEGRAM_BOT_TOKEN, method), {
+    const res = await this.fetchWithTimeout(telegramUrl(this.env.TELEGRAM_BOT_TOKEN, method), {
       method: "POST",
       body: formData,
     });
@@ -162,7 +196,10 @@ export class TelegramClient {
       throw new Error(`Failed to resolve Telegram file path for ${fileId}`);
     }
 
-    const res = await fetch(telegramFileUrl(this.env.TELEGRAM_BOT_TOKEN, file.result.file_path));
+    const res = await this.fetchWithTimeout(
+      telegramFileUrl(this.env.TELEGRAM_BOT_TOKEN, file.result.file_path),
+      { method: "GET" },
+    );
     if (!res.ok) {
       throw new Error(`Failed to download Telegram file: ${res.status}`);
     }

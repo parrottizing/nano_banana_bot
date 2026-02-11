@@ -11,7 +11,6 @@ import {
   setUserState,
   shouldShowImageCountPrompt,
   upsertMediaGroup,
-  markMediaGroupQueued,
 } from "../db/repositories";
 import { MAX_IMAGE_SIZE_BYTES, MAX_IMAGES, TOKEN_COSTS } from "../types/domain";
 import type { Env } from "../types/env";
@@ -20,6 +19,7 @@ import type { TelegramMessage } from "../types/telegram";
 import { enqueueJob, makeJobId } from "../services/jobs";
 
 export const CTR_ENHANCEMENT_PROMPT = `\nКРИТИЧЕСКИ ВАЖНО: Пользователь хочет улучшить CTR (кликабельность) для маркетплейса (Wildberries, Ozon, Яндекс.Маркет).\n\nПРИМЕНЯЙ СТРАТЕГИЮ "УМНОГО МИНИМАЛИЗМА" (2025):\n\n• Товар должен занимать минимум 60-70% площади изображения\n• Только 1-2 крупных тезиса\n• Соотношение сторон строго 3:4\n• Без указания цены на изображении\n• Чистая, контрастная композиция`;
+const FLUSH_MEDIA_GROUP_DELAY_SECONDS = 3;
 
 export async function createPhotoEntry(env: Env, telegram: TelegramClient, userId: number, chatId: number): Promise<void> {
   await getOrCreateUser(env.DB, userId);
@@ -222,18 +222,15 @@ export async function handleCreatePhotoImage(
       return true;
     }
 
-    const queuedNow = await markMediaGroupQueued(env.DB, group.mediaGroupId);
-    if (queuedNow) {
-      await enqueueJob(env, {
-        id: makeJobId("flush_media_group"),
-        type: "FLUSH_MEDIA_GROUP_JOB",
-        telegramUserId: userId,
-        chatId,
-        mediaGroupId: group.mediaGroupId,
-      }, {
-        delaySeconds: 2,
-      });
-    }
+    await enqueueJob(env, {
+      id: makeJobId("flush_media_group"),
+      type: "FLUSH_MEDIA_GROUP_JOB",
+      telegramUserId: userId,
+      chatId,
+      mediaGroupId: group.mediaGroupId,
+    }, {
+      delaySeconds: FLUSH_MEDIA_GROUP_DELAY_SECONDS,
+    });
 
     return true;
   }
