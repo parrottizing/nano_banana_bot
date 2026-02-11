@@ -32,9 +32,9 @@ function buildPaymentPayload(env: Env, packageId: string, userId: number): Recor
     payment_method_data: { type: "sbp" },
     confirmation: {
       type: "redirect",
-      return_url: returnUrl,
+      return_url: telegramReturnUrl(env),
     },
-    description: `${PAYMENT_TITLE}: ${packageInfo.balance} токенов`,
+    description: PAYMENT_TITLE,
     metadata: {
       package_id: packageId,
       telegram_user_id: String(userId),
@@ -45,7 +45,7 @@ function buildPaymentPayload(env: Env, packageId: string, userId: number): Recor
       },
       items: [
         {
-          description: `Пополнение баланса: ${packageInfo.balance} токенов`,
+          description: PAYMENT_TITLE,
           quantity: "1.00",
           amount: {
             value: packageInfo.rub.toFixed(2),
