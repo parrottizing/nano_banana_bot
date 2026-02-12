@@ -34,4 +34,5 @@ export const JOB_TYPES: JobType[] = [
   "ANALYZE_CTR_JOB",
   "IMPROVE_CTR_JOB",
   "FLUSH_MEDIA_GROUP_JOB",
+  "PAYMENT_RECONCILE_JOB",
 ];

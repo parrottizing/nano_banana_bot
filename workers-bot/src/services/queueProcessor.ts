@@ -19,7 +19,9 @@ import type {
   FlushMediaGroupJobPayload,
   ImproveCtrJobPayload,
   JobPayload,
+  PaymentReconcileJobPayload,
 } from "../types/jobs";
+import type { PaymentWebhookEvent } from "../types/providers";
 import { TelegramClient } from "../telegram/client";
 import { LaoZhangService, TEXT_MODEL } from "./laozhang";
 import { enqueueJob, makeJobId } from "./jobs";
@@ -35,6 +37,7 @@ import {
 } from "../handlers/analyzeCtr";
 import { buildImprovementPrompt } from "../handlers/improveCtr";
 import { CTR_ENHANCEMENT_PROMPT } from "../handlers/createPhoto";
+import { handleYooKassaWebhook } from "../handlers/payments";
 import { TOKEN_COSTS } from "../types/domain";
 
 const PHOTO_LOADING_EMOJIS = ["🤔", "💡", "🎨"] as const;
@@ -547,6 +550,23 @@ async function processFlushMediaGroup(env: Env, payload: FlushMediaGroupJobPaylo
   }
 }
 
+async function processPaymentReconcile(env: Env, payload: PaymentReconcileJobPayload): Promise<void> {
+  const paymentIds = [...new Set(payload.paymentIds.filter((id) => id && id.trim().length > 0))];
+  for (const paymentId of paymentIds) {
+    const syntheticPayload: PaymentWebhookEvent = {
+      event: "payment.succeeded",
+      object: {
+        id: paymentId,
+        status: "succeeded",
+      },
+    };
+    await handleYooKassaWebhook(env, syntheticPayload, {
+      trigger: "auto_reconcile_queue",
+      requestId: `queue:${payload.id}:${paymentId}`,
+    });
+  }
+}
+
 export async function processQueueMessage(env: Env, payload: JobPayload): Promise<void> {
   await markJobRunning(env.DB, payload.id);
   try {
@@ -562,6 +582,9 @@ export async function processQueueMessage(env: Env, payload: JobPayload): Promis
         break;
       case "FLUSH_MEDIA_GROUP_JOB":
         await processFlushMediaGroup(env, payload);
+        break;
+      case "PAYMENT_RECONCILE_JOB":
+        await processPaymentReconcile(env, payload);
         break;
     }
     await markJobDone(env.DB, payload.id);

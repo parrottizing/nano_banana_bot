@@ -47,8 +47,13 @@ function cleanBotUsername(input: string | undefined): string | null {
 }
 
 async function notifyQueueFailure(env: Env, payload: JobPayload, error: unknown): Promise<void> {
-  const telegram = new TelegramClient(env);
   const reason = error instanceof Error ? error.message : String(error);
+  if (payload.type === "PAYMENT_RECONCILE_JOB") {
+    console.error("Final payment reconcile failure", { id: payload.id, type: payload.type, reason });
+    return;
+  }
+
+  const telegram = new TelegramClient(env);
 
   let text = "❌ Не удалось выполнить задачу. Попробуйте снова чуть позже.";
   if (payload.type === "CREATE_PHOTO_JOB" || payload.type === "IMPROVE_CTR_JOB") {
@@ -85,8 +90,13 @@ async function notifyQueueRetry(
   attempts: number,
   error: unknown,
 ): Promise<void> {
-  const telegram = new TelegramClient(env);
   const reason = error instanceof Error ? error.message : String(error);
+  if (payload.type === "PAYMENT_RECONCILE_JOB") {
+    console.warn("Retrying payment reconcile job", { id: payload.id, attempts, reason });
+    return;
+  }
+
+  const telegram = new TelegramClient(env);
   const nextAttempt = attempts + 1;
 
   let text = `⚠️ Временная ошибка. Повторяем автоматически (попытка ${nextAttempt} из ${MAX_QUEUE_RETRIES}).`;

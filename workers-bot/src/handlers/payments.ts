@@ -18,9 +18,11 @@ import {
 import type { Env } from "../types/env";
 import { TelegramClient } from "../telegram/client";
 import { YooKassaService } from "../services/yookassa";
+import { enqueueJob, makeJobId } from "../services/jobs";
 import type { PaymentWebhookEvent } from "../types/providers";
 
 const RECEIPT_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const AUTO_RECONCILE_DELAYS_SECONDS = [5, 15, 30] as const;
 
 export function isValidReceiptEmail(input: string): boolean {
   const normalized = input.trim();
@@ -29,6 +31,32 @@ export function isValidReceiptEmail(input: string): boolean {
 
 function normalizeReceiptEmail(input: string): string {
   return input.trim();
+}
+
+async function scheduleAutoReconcileJobs(
+  env: Env,
+  telegramUserId: number,
+  chatId: number,
+  paymentIds: string[],
+): Promise<void> {
+  const uniquePaymentIds = [...new Set(paymentIds.filter((id) => id && id.trim().length > 0))];
+  if (uniquePaymentIds.length === 0) {
+    return;
+  }
+
+  for (const delaySeconds of AUTO_RECONCILE_DELAYS_SECONDS) {
+    await enqueueJob(
+      env,
+      {
+        id: makeJobId("payment_reconcile"),
+        type: "PAYMENT_RECONCILE_JOB",
+        telegramUserId,
+        chatId,
+        paymentIds: uniquePaymentIds,
+      },
+      { delaySeconds },
+    );
+  }
 }
 
 export interface PaymentWebhookRequestMeta {
@@ -215,6 +243,7 @@ export async function showBuyTokensMenu(
   }
 
   const urlMap: Record<string, string> = {};
+  const paymentIds: string[] = [];
   for (const packageId of PAYMENT_PACKAGE_ORDER) {
     const payment = await yookassa.createSbpPayment(packageId, userId, receiptEmail);
     const confirmationUrl = payment.confirmation?.confirmation_url;
@@ -222,6 +251,7 @@ export async function showBuyTokensMenu(
       throw new Error(`YooKassa response missing id/confirmation_url for package ${packageId}`);
     }
     urlMap[packageId] = confirmationUrl;
+    paymentIds.push(payment.id);
 
     await logConversation(env.DB, {
       telegramUserId: userId,
@@ -232,11 +262,23 @@ export async function showBuyTokensMenu(
     });
   }
 
+  try {
+    await scheduleAutoReconcileJobs(env, userId, chatId, paymentIds);
+  } catch (error) {
+    console.error("Failed to schedule payment auto-reconcile jobs", {
+      userId,
+      chatId,
+      paymentIds,
+      error,
+    });
+  }
+
   await telegram.sendMessage(
     chatId,
     "💳 *Покупка токенов*\n\n" +
       "🎨 Генерация изображения — 25 токенов\n\n" +
       "Выберите подходящий пакет:\n\n" +
+      "• 1₽ — 1 токен\n" +
       "• 100₽ — 100 токенов\n" +
       "• 300₽ — 325 токенов (+25 бонус)\n" +
       "• 1000₽ — 1100 токенов (+100 бонус)\n" +
@@ -287,6 +329,17 @@ export async function sendPackagePaymentLink(
     content: `package=${packageId}`,
     metadata: { payment_id: paymentId },
   });
+
+  try {
+    await scheduleAutoReconcileJobs(env, userId, chatId, [paymentId]);
+  } catch (error) {
+    console.error("Failed to schedule single payment auto-reconcile jobs", {
+      userId,
+      chatId,
+      paymentId,
+      error,
+    });
+  }
 
   await telegram.sendMessage(
     chatId,

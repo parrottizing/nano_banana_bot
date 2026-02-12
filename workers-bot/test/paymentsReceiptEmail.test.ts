@@ -19,6 +19,11 @@ const yookassaMocks = vi.hoisted(() => ({
   getPayment: vi.fn(),
 }));
 
+const jobsMocks = vi.hoisted(() => ({
+  enqueueJob: vi.fn(),
+  makeJobId: vi.fn(),
+}));
+
 vi.mock("../src/db/repositories", () => repoMocks);
 
 vi.mock("../src/services/yookassa", () => ({
@@ -27,6 +32,11 @@ vi.mock("../src/services/yookassa", () => ({
     createSbpPayment: yookassaMocks.createSbpPayment,
     getPayment: yookassaMocks.getPayment,
   })),
+}));
+
+vi.mock("../src/services/jobs", () => ({
+  enqueueJob: jobsMocks.enqueueJob,
+  makeJobId: jobsMocks.makeJobId,
 }));
 
 import { handleReceiptEmailText, isValidReceiptEmail, startBuyTokensFlow } from "../src/handlers/payments";
@@ -67,6 +77,9 @@ function makeUser(overrides: Partial<{ receipt_email: string | null }> = {}) {
 describe("payment receipt email flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    let jobCounter = 0;
+    jobsMocks.enqueueJob.mockResolvedValue(undefined);
+    jobsMocks.makeJobId.mockImplementation((prefix: string) => `${prefix}-${++jobCounter}`);
     repoMocks.getUserState.mockResolvedValue(null);
     repoMocks.getOrCreateUser.mockResolvedValue(makeUser());
     yookassaMocks.hasCredentials.mockReturnValue(true);
@@ -136,5 +149,25 @@ describe("payment receipt email flow", () => {
     expect(repoMocks.setUserReceiptEmail).not.toHaveBeenCalled();
     expect(yookassaMocks.createSbpPayment).not.toHaveBeenCalled();
     expect(telegram.sendMessage).toHaveBeenCalledWith(77, expect.stringContaining("Неверный формат email"));
+  });
+
+  it("schedules fast auto-reconcile queue jobs after pre-creating payment links", async () => {
+    const env = makeEnv();
+    const telegram = { sendMessage: vi.fn().mockResolvedValue({}) } as any;
+
+    repoMocks.getOrCreateUser.mockResolvedValue(makeUser({ receipt_email: "buyer@example.com" }));
+
+    await startBuyTokensFlow(env as any, telegram, 101, 202);
+
+    expect(jobsMocks.enqueueJob).toHaveBeenCalledTimes(3);
+    const delays = jobsMocks.enqueueJob.mock.calls.map((call: any[]) => call[2]?.delaySeconds);
+    expect(delays).toEqual([5, 15, 30]);
+
+    const paymentIdsByCall = jobsMocks.enqueueJob.mock.calls.map((call: any[]) => call[1].paymentIds);
+    expect(paymentIdsByCall).toEqual([
+      ["payment-1", "payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
+      ["payment-1", "payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
+      ["payment-1", "payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
+    ]);
   });
 });

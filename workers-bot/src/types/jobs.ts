@@ -2,7 +2,8 @@ export type JobType =
   | "CREATE_PHOTO_JOB"
   | "ANALYZE_CTR_JOB"
   | "IMPROVE_CTR_JOB"
-  | "FLUSH_MEDIA_GROUP_JOB";
+  | "FLUSH_MEDIA_GROUP_JOB"
+  | "PAYMENT_RECONCILE_JOB";
 
 export interface BaseJobPayload {
   id: string;
@@ -39,8 +40,14 @@ export interface FlushMediaGroupJobPayload extends BaseJobPayload {
   mediaGroupId: string;
 }
 
+export interface PaymentReconcileJobPayload extends BaseJobPayload {
+  type: "PAYMENT_RECONCILE_JOB";
+  paymentIds: string[];
+}
+
 export type JobPayload =
   | CreatePhotoJobPayload
   | AnalyzeCtrJobPayload
   | ImproveCtrJobPayload
-  | FlushMediaGroupJobPayload;
+  | FlushMediaGroupJobPayload
+  | PaymentReconcileJobPayload;
