@@ -126,7 +126,7 @@ describe("payment receipt email flow", () => {
     expect(handled).toBe(true);
     expect(repoMocks.setUserReceiptEmail).toHaveBeenCalledWith(env.DB, 101, "buyer@example.com");
     expect(repoMocks.clearUserState).toHaveBeenCalledWith(env.DB, 101);
-    expect(yookassaMocks.createSbpPayment).toHaveBeenCalledWith("1", 101, "buyer@example.com");
+    expect(yookassaMocks.createSbpPayment).toHaveBeenCalledWith("100", 101, "buyer@example.com");
     expect(telegram.sendMessage.mock.calls.some((call: any[]) =>
       call[0] === 202 && typeof call[1] === "string" && call[1].includes("Покупка токенов"))).toBe(true);
   });
@@ -165,9 +165,9 @@ describe("payment receipt email flow", () => {
 
     const paymentIdsByCall = jobsMocks.enqueueJob.mock.calls.map((call: any[]) => call[1].paymentIds);
     expect(paymentIdsByCall).toEqual([
-      ["payment-1", "payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
-      ["payment-1", "payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
-      ["payment-1", "payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
+      ["payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
+      ["payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
+      ["payment-100", "payment-300", "payment-1000", "payment-3000", "payment-5000"],
     ]);
   });
 });
