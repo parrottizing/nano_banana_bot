@@ -21,7 +21,12 @@ import {
   handleAnalyzeCtrText,
 } from "../handlers/analyzeCtr";
 import { startImproveCtr } from "../handlers/improveCtr";
-import { sendPackagePaymentLink, showBuyTokensMenu } from "../handlers/payments";
+import {
+  handleReceiptEmailNonText,
+  handleReceiptEmailText,
+  sendPackagePaymentLink,
+  startBuyTokensFlow,
+} from "../handlers/payments";
 import { DEFAULT_MENU_BANNER_BASE64 } from "../assets/menuBannerBase64";
 
 function mainMenuKeyboard() {
@@ -151,7 +156,7 @@ export async function routeUpdate(env: Env, update: TelegramUpdate): Promise<voi
           await showBalance(env, telegram, userId, chatId);
           return;
         case "buy_tokens":
-          await showBuyTokensMenu(env, telegram, userId, chatId);
+          await startBuyTokensFlow(env, telegram, userId, chatId);
           return;
         case "support":
           await showSupport(env, telegram, userId, chatId);
@@ -212,7 +217,16 @@ export async function routeUpdate(env: Env, update: TelegramUpdate): Promise<voi
       return;
     }
 
+    if (typeof text === "string" && text.length > 0) {
+      if (await handleReceiptEmailText(env, telegram, userId, chatId, text)) {
+        return;
+      }
+    }
+
     if (message.photo?.length) {
+      if (await handleReceiptEmailNonText(env, telegram, userId, chatId)) {
+        return;
+      }
       if (await handleCreatePhotoImage(env, telegram, userId, chatId, message)) {
         return;
       }
@@ -231,6 +245,10 @@ export async function routeUpdate(env: Env, update: TelegramUpdate): Promise<voi
         return;
       }
       await telegram.sendMessage(chatId, "👆 Используйте /start для открытия меню.");
+      return;
+    }
+
+    if (await handleReceiptEmailNonText(env, telegram, userId, chatId)) {
       return;
     }
 

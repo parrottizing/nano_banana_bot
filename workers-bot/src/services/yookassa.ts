@@ -32,7 +32,7 @@ function telegramReturnUrl(env: Env, userId: number): string {
   return `${bridgeBase}/payments/telegram-return?${query.toString()}`;
 }
 
-function buildPaymentPayload(env: Env, packageId: string, userId: number): Record<string, unknown> {
+function buildPaymentPayload(env: Env, packageId: string, userId: number, receiptEmail: string): Record<string, unknown> {
   const packageInfo = PAYMENT_PACKAGES[packageId];
   if (!packageInfo) {
     throw new Error(`Unknown package id: ${packageId}`);
@@ -56,7 +56,7 @@ function buildPaymentPayload(env: Env, packageId: string, userId: number): Recor
     },
     receipt: {
       customer: {
-        email: env.YOOKASSA_RECEIPT_EMAIL,
+        email: receiptEmail,
       },
       items: [
         {
@@ -99,7 +99,7 @@ export class YooKassaService {
     return `${PAYMENT_START_PARAMETER}:${packageId}:${userId}:${randomIdempotenceKey()}`;
   }
 
-  async createSbpPayment(packageId: string, userId: number): Promise<YooKassaPaymentCreateResult> {
+  async createSbpPayment(packageId: string, userId: number, receiptEmail: string): Promise<YooKassaPaymentCreateResult> {
     if (!this.hasCredentials()) {
       throw new Error("YooKassa credentials are missing");
     }
@@ -111,7 +111,7 @@ export class YooKassaService {
         "Content-Type": "application/json",
         "Idempotence-Key": randomIdempotenceKey(),
       },
-      body: JSON.stringify(buildPaymentPayload(this.env, packageId, userId)),
+      body: JSON.stringify(buildPaymentPayload(this.env, packageId, userId, receiptEmail)),
     });
 
     const body = (await res.json()) as YooKassaPaymentCreateResult;

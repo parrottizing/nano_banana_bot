@@ -7,6 +7,7 @@ export interface UserRow {
   balance: number;
   image_count: number;
   has_seen_image_count_prompt: number;
+  receipt_email: string | null;
   created_at: string;
   last_active: string;
 }
@@ -54,6 +55,13 @@ export async function updateUserBalance(db: D1Database, telegramUserId: number, 
     .bind(telegramUserId)
     .first<{ balance: number }>();
   return row?.balance ?? 0;
+}
+
+export async function setUserReceiptEmail(db: D1Database, telegramUserId: number, email: string): Promise<void> {
+  await db
+    .prepare("UPDATE users SET receipt_email = ?, last_active = CURRENT_TIMESTAMP WHERE telegram_user_id = ?")
+    .bind(email.trim(), telegramUserId)
+    .run();
 }
 
 export async function checkBalance(db: D1Database, telegramUserId: number, required: number): Promise<boolean> {

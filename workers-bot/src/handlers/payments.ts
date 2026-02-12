@@ -1,6 +1,10 @@
 import {
-  logConversation,
+  clearUserState,
+  getUserState,
   getOrCreateUser,
+  logConversation,
+  setUserReceiptEmail,
+  setUserState,
   applySuccessfulPayment,
   findCreatedPaymentReference,
   listRecentPendingPaymentIds,
@@ -15,6 +19,54 @@ import { TelegramClient } from "../telegram/client";
 import { YooKassaService } from "../services/yookassa";
 import type { PaymentWebhookEvent } from "../types/providers";
 
+const RECEIPT_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isValidReceiptEmail(input: string): boolean {
+  const normalized = input.trim();
+  return normalized.length > 0 && RECEIPT_EMAIL_REGEX.test(normalized);
+}
+
+function normalizeReceiptEmail(input: string): string {
+  return input.trim();
+}
+
+async function promptForReceiptEmail(
+  env: Env,
+  telegram: TelegramClient,
+  userId: number,
+  chatId: number,
+): Promise<void> {
+  await setUserState(env.DB, userId, "payment", "awaiting_receipt_email", {});
+  await telegram.sendMessage(
+    chatId,
+    "📧 Для оплаты нужен email для отправки чека.\n\n" +
+      "Отправьте email текстом в этом чате.\n" +
+      "Пример: name@example.com",
+  );
+}
+
+async function resolveReceiptEmailForPayment(
+  env: Env,
+  telegram: TelegramClient,
+  userId: number,
+  chatId: number,
+  providedEmail?: string,
+): Promise<string | null> {
+  if (providedEmail && isValidReceiptEmail(providedEmail)) {
+    return normalizeReceiptEmail(providedEmail);
+  }
+
+  const user = await getOrCreateUser(env.DB, userId);
+  const savedEmail = user.receipt_email ? normalizeReceiptEmail(user.receipt_email) : "";
+  if (savedEmail && isValidReceiptEmail(savedEmail)) {
+    return savedEmail;
+  }
+
+  console.error("Missing receipt email in payment flow", { userId });
+  await promptForReceiptEmail(env, telegram, userId, chatId);
+  return null;
+}
+
 export function buyTokensKeyboard(packageToUrl: Record<string, string>) {
   return {
     inline_keyboard: [
@@ -27,16 +79,80 @@ export function buyTokensKeyboard(packageToUrl: Record<string, string>) {
   };
 }
 
-export async function showBuyTokensMenu(env: Env, telegram: TelegramClient, userId: number, chatId: number): Promise<void> {
+export async function startBuyTokensFlow(env: Env, telegram: TelegramClient, userId: number, chatId: number): Promise<void> {
+  const user = await getOrCreateUser(env.DB, userId);
+  const savedEmail = user.receipt_email ? normalizeReceiptEmail(user.receipt_email) : "";
+
+  if (!savedEmail || !isValidReceiptEmail(savedEmail)) {
+    await promptForReceiptEmail(env, telegram, userId, chatId);
+    return;
+  }
+
+  await clearUserState(env.DB, userId);
+  await showBuyTokensMenu(env, telegram, userId, chatId, savedEmail);
+}
+
+export async function handleReceiptEmailText(
+  env: Env,
+  telegram: TelegramClient,
+  userId: number,
+  chatId: number,
+  text: string,
+): Promise<boolean> {
+  const state = await getUserState(env.DB, userId);
+  if (!state || state.feature !== "payment" || state.state !== "awaiting_receipt_email") {
+    return false;
+  }
+
+  const email = normalizeReceiptEmail(text);
+  if (!isValidReceiptEmail(email)) {
+    await telegram.sendMessage(chatId, "⚠️ Неверный формат email. Отправьте корректный email для чека.");
+    return true;
+  }
+
+  await setUserReceiptEmail(env.DB, userId, email);
+  await clearUserState(env.DB, userId);
+  await telegram.sendMessage(chatId, `✅ Email для чека сохранен: ${email}`);
+  await showBuyTokensMenu(env, telegram, userId, chatId, email);
+  return true;
+}
+
+export async function handleReceiptEmailNonText(
+  env: Env,
+  telegram: TelegramClient,
+  userId: number,
+  chatId: number,
+): Promise<boolean> {
+  const state = await getUserState(env.DB, userId);
+  if (!state || state.feature !== "payment" || state.state !== "awaiting_receipt_email") {
+    return false;
+  }
+
+  await telegram.sendMessage(chatId, "Отправьте email текстом для чека.");
+  return true;
+}
+
+export async function showBuyTokensMenu(
+  env: Env,
+  telegram: TelegramClient,
+  userId: number,
+  chatId: number,
+  providedReceiptEmail?: string,
+): Promise<void> {
   const yookassa = new YooKassaService(env);
   if (!yookassa.hasCredentials()) {
     await telegram.sendMessage(chatId, "❌ Оплата временно недоступна. Напишите в поддержку.");
     return;
   }
 
+  const receiptEmail = await resolveReceiptEmailForPayment(env, telegram, userId, chatId, providedReceiptEmail);
+  if (!receiptEmail) {
+    return;
+  }
+
   const urlMap: Record<string, string> = {};
   for (const packageId of PAYMENT_PACKAGE_ORDER) {
-    const payment = await yookassa.createSbpPayment(packageId, userId);
+    const payment = await yookassa.createSbpPayment(packageId, userId, receiptEmail);
     const confirmationUrl = payment.confirmation?.confirmation_url;
     if (!payment.id || !confirmationUrl) {
       throw new Error(`YooKassa response missing id/confirmation_url for package ${packageId}`);
@@ -88,7 +204,12 @@ export async function sendPackagePaymentLink(
     return;
   }
 
-  const payment = await yookassa.createSbpPayment(packageId, userId);
+  const receiptEmail = await resolveReceiptEmailForPayment(env, telegram, userId, chatId);
+  if (!receiptEmail) {
+    return;
+  }
+
+  const payment = await yookassa.createSbpPayment(packageId, userId, receiptEmail);
   const paymentId = payment.id;
   const confirmationUrl = payment.confirmation?.confirmation_url;
   if (!paymentId || !confirmationUrl) {

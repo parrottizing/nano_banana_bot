@@ -15,7 +15,6 @@ function makeEnv() {
     LAOZHANG_PER_USE_API_KEY: "y",
     YOOKASSA_SHOP_ID: "shop",
     YOOKASSA_SECRET_KEY: "secret",
-    YOOKASSA_RECEIPT_EMAIL: "checks@example.com",
     SUPPORT_USERNAME: "support_user",
   };
 }
