@@ -3,6 +3,7 @@ import {
   getUserState,
   getOrCreateUser,
   logConversation,
+  logPaymentWebhookEvent,
   setUserReceiptEmail,
   setUserState,
   applySuccessfulPayment,
@@ -28,6 +29,69 @@ export function isValidReceiptEmail(input: string): boolean {
 
 function normalizeReceiptEmail(input: string): string {
   return input.trim();
+}
+
+export interface PaymentWebhookRequestMeta {
+  trigger?: string;
+  requestId?: string;
+  cfRay?: string;
+  cfConnectingIp?: string;
+  userAgent?: string;
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+async function safeLogWebhookStage(
+  env: Env,
+  payload: PaymentWebhookEvent,
+  requestMeta: PaymentWebhookRequestMeta | undefined,
+  input: {
+    stage: string;
+    eventType?: string | null;
+    paymentId?: string | null;
+    httpStatus?: number | null;
+    reason?: string | null;
+    telegramUserId?: number | null;
+    packageId?: string | null;
+    amount?: number | null;
+    currency?: string | null;
+    balanceAdded?: number | null;
+    verified?: Record<string, unknown> | null;
+    includePayload?: boolean;
+  },
+): Promise<void> {
+  try {
+    await logPaymentWebhookEvent(env.DB, {
+      stage: input.stage,
+      eventType: input.eventType ?? payload.event ?? null,
+      paymentId: input.paymentId ?? payload.object?.id ?? null,
+      httpStatus: input.httpStatus ?? null,
+      reason: input.reason ?? null,
+      telegramUserId: input.telegramUserId ?? null,
+      packageId: input.packageId ?? null,
+      amount: input.amount ?? null,
+      currency: input.currency ?? null,
+      balanceAdded: input.balanceAdded ?? null,
+      payload: input.includePayload ? (payload as unknown as Record<string, unknown>) : null,
+      verified: input.verified ?? null,
+      requestMeta: requestMeta ? (requestMeta as unknown as Record<string, unknown>) : null,
+    });
+  } catch (error) {
+    console.error("Failed to persist payment webhook event log", {
+      stage: input.stage,
+      paymentId: input.paymentId ?? payload.object?.id ?? null,
+      error,
+    });
+  }
 }
 
 async function promptForReceiptEmail(
@@ -313,9 +377,17 @@ async function processSucceededPayment(
   payload: PaymentWebhookEvent,
   paymentId: string,
   verified: Record<string, unknown>,
+  requestMeta?: PaymentWebhookRequestMeta,
 ): Promise<"credited" | "already_credited" | "retry"> {
   const context = await resolvePaymentContext(env, payload, verified, paymentId);
   if (!context) {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "context_unresolved",
+      paymentId,
+      httpStatus: 409,
+      reason: "unable_to_resolve_context",
+      verified,
+    });
     console.error("Unable to resolve YooKassa payment context", {
       paymentId,
       verifiedMetadata: (verified as any)?.metadata ?? null,
@@ -327,6 +399,16 @@ async function processSucceededPayment(
   }
 
   await getOrCreateUser(env.DB, context.telegramUserId);
+  await safeLogWebhookStage(env, payload, requestMeta, {
+    stage: "context_resolved",
+    paymentId,
+    telegramUserId: context.telegramUserId,
+    packageId: context.packageId,
+    amount: context.amount,
+    currency: context.currency,
+    balanceAdded: context.balanceAdded,
+    verified,
+  });
 
   const newBalance = await applySuccessfulPayment(env.DB, {
     telegramUserId: context.telegramUserId,
@@ -340,6 +422,17 @@ async function processSucceededPayment(
   });
 
   if (newBalance === null) {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "already_credited",
+      paymentId,
+      httpStatus: 200,
+      telegramUserId: context.telegramUserId,
+      packageId: context.packageId,
+      amount: context.amount,
+      currency: context.currency,
+      balanceAdded: context.balanceAdded,
+      verified,
+    });
     return "already_credited";
   }
 
@@ -363,6 +456,17 @@ async function processSucceededPayment(
       `✅ Баланс пополнен на ${context.balanceAdded} токенов. Текущий баланс: ${newBalance}.`,
     );
   } catch (error) {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "telegram_notify_failed",
+      paymentId,
+      telegramUserId: context.telegramUserId,
+      packageId: context.packageId,
+      amount: context.amount,
+      currency: context.currency,
+      balanceAdded: context.balanceAdded,
+      reason: formatError(error),
+      verified,
+    });
     console.error("Failed to notify user about successful payment", {
       telegramUserId: context.telegramUserId,
       paymentId,
@@ -370,16 +474,47 @@ async function processSucceededPayment(
     });
   }
 
+  await safeLogWebhookStage(env, payload, requestMeta, {
+    stage: "credited",
+    paymentId,
+    httpStatus: 200,
+    telegramUserId: context.telegramUserId,
+    packageId: context.packageId,
+    amount: context.amount,
+    currency: context.currency,
+    balanceAdded: context.balanceAdded,
+    verified,
+  });
+
   return "credited";
 }
 
-export async function handleYooKassaWebhook(env: Env, payload: PaymentWebhookEvent): Promise<Response> {
+export async function handleYooKassaWebhook(
+  env: Env,
+  payload: PaymentWebhookEvent,
+  requestMeta?: PaymentWebhookRequestMeta,
+): Promise<Response> {
+  await safeLogWebhookStage(env, payload, requestMeta, {
+    stage: "received",
+    includePayload: true,
+  });
+
   if (payload.event !== "payment.succeeded") {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "ignored_event",
+      httpStatus: 200,
+      reason: `unsupported_event:${payload.event}`,
+    });
     return new Response("ignored", { status: 200 });
   }
 
   const paymentId = payload.object?.id;
   if (!paymentId) {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "missing_payment_id",
+      httpStatus: 400,
+      reason: "payment_id_missing",
+    });
     return new Response("bad request", { status: 400 });
   }
 
@@ -388,21 +523,62 @@ export async function handleYooKassaWebhook(env: Env, payload: PaymentWebhookEve
   try {
     verified = await yookassa.getPayment(paymentId);
   } catch (error) {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "yookassa_verify_failed",
+      paymentId,
+      httpStatus: 502,
+      reason: formatError(error),
+    });
     console.error("YooKassa getPayment failed in webhook", { paymentId, error });
     return new Response("retry", { status: 502 });
   }
 
   const status = String((verified as any)?.status ?? payload.object?.status ?? "");
   if (status !== "succeeded") {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "provider_status_not_succeeded",
+      paymentId,
+      httpStatus: 409,
+      reason: `provider_status:${status}`,
+      verified,
+    });
     console.warn("YooKassa webhook status is not succeeded yet", { paymentId, status });
     return new Response("retry", { status: 409 });
   }
 
-  const result = await processSucceededPayment(env, payload, paymentId, verified);
+  let result: "credited" | "already_credited" | "retry";
+  try {
+    result = await processSucceededPayment(env, payload, paymentId, verified, requestMeta);
+  } catch (error) {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "processing_exception",
+      paymentId,
+      httpStatus: 502,
+      reason: formatError(error),
+      verified,
+    });
+    console.error("Unhandled error while processing successful payment", { paymentId, error });
+    return new Response("retry", { status: 502 });
+  }
+
   if (result === "retry") {
+    await safeLogWebhookStage(env, payload, requestMeta, {
+      stage: "retry_response",
+      paymentId,
+      httpStatus: 409,
+      reason: "processing_requested_retry",
+      verified,
+    });
     return new Response("retry", { status: 409 });
   }
 
+  await safeLogWebhookStage(env, payload, requestMeta, {
+    stage: "ok_response",
+    paymentId,
+    httpStatus: 200,
+    reason: result,
+    verified,
+  });
   return new Response("ok", { status: 200 });
 }
 
@@ -420,6 +596,9 @@ export async function reconcileRecentPaymentsForUser(env: Env, telegramUserId: n
         status: "succeeded",
       },
     };
-    await handleYooKassaWebhook(env, syntheticPayload);
+    await handleYooKassaWebhook(env, syntheticPayload, {
+      trigger: "return_reconcile",
+      requestId: `reconcile:${telegramUserId}:${paymentId}`,
+    });
   }
 }

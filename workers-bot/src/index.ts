@@ -162,7 +162,13 @@ app.post("/telegram/webhook/:webhookSecret", async (c) => {
 
 app.post("/webhooks/yookassa", async (c) => {
   const payload = (await c.req.json()) as any;
-  const response = await handleYooKassaWebhook(c.env, payload);
+  const response = await handleYooKassaWebhook(c.env, payload, {
+    trigger: "webhook_http",
+    requestId: c.req.header("X-Request-Id") ?? c.req.header("Idempotence-Key") ?? undefined,
+    cfRay: c.req.header("CF-Ray") ?? undefined,
+    cfConnectingIp: c.req.header("CF-Connecting-IP") ?? undefined,
+    userAgent: c.req.header("User-Agent") ?? undefined,
+  });
   return response;
 });
 

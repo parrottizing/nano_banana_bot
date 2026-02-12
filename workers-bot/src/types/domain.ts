@@ -12,6 +12,7 @@ export const PAYMENT_TITLE = "Пополнение баланса";
 export const PAYMENT_CURRENCY = "RUB";
 
 export const PAYMENT_PACKAGES: Record<string, { rub: number; balance: number }> = {
+  "1": { rub: 1, balance: 1 },
   "100": { rub: 100, balance: 100 },
   "300": { rub: 300, balance: 325 },
   "1000": { rub: 1000, balance: 1100 },
@@ -19,7 +20,7 @@ export const PAYMENT_PACKAGES: Record<string, { rub: number; balance: number }> 
   "5000": { rub: 5000, balance: 6000 },
 };
 
-export const PAYMENT_PACKAGE_ORDER = ["100", "300", "1000", "3000", "5000"];
+export const PAYMENT_PACKAGE_ORDER = ["1", "100", "300", "1000", "3000", "5000"];
 
 export const MAX_IMAGES = 6;
 export const MAX_IMAGE_SIZE_BYTES = 7 * 1024 * 1024;

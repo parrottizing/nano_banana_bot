@@ -7,6 +7,7 @@ const repoMocks = vi.hoisted(() => ({
   setUserReceiptEmail: vi.fn(),
   setUserState: vi.fn(),
   logConversation: vi.fn(),
+  logPaymentWebhookEvent: vi.fn(),
   applySuccessfulPayment: vi.fn(),
   findCreatedPaymentReference: vi.fn(),
   listRecentPendingPaymentIds: vi.fn(),
@@ -112,7 +113,7 @@ describe("payment receipt email flow", () => {
     expect(handled).toBe(true);
     expect(repoMocks.setUserReceiptEmail).toHaveBeenCalledWith(env.DB, 101, "buyer@example.com");
     expect(repoMocks.clearUserState).toHaveBeenCalledWith(env.DB, 101);
-    expect(yookassaMocks.createSbpPayment).toHaveBeenCalledWith("100", 101, "buyer@example.com");
+    expect(yookassaMocks.createSbpPayment).toHaveBeenCalledWith("1", 101, "buyer@example.com");
     expect(telegram.sendMessage.mock.calls.some((call: any[]) =>
       call[0] === 202 && typeof call[1] === "string" && call[1].includes("Покупка токенов"))).toBe(true);
   });

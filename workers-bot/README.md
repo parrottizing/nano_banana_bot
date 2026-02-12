@@ -16,6 +16,7 @@ Cloudflare Workers + D1 implementation of the Nano Banana Telegram bot.
 3. Apply migration:
    - `wrangler d1 execute nano-banana-bot --file=./migrations/0001_init.sql`
    - `wrangler d1 execute nano-banana-bot --file=./migrations/0002_user_receipt_email.sql`
+   - `wrangler d1 execute nano-banana-bot --file=./migrations/0003_payment_webhook_events.sql`
 4. Set secrets:
    - `wrangler secret put TELEGRAM_BOT_TOKEN`
    - `wrangler secret put TELEGRAM_WEBHOOK_SECRET`
@@ -31,6 +32,7 @@ Cloudflare Workers + D1 implementation of the Nano Banana Telegram bot.
 ## Notes
 
 - Payments are webhook-confirmed (`payment.succeeded`) and idempotent via unique provider charge ID.
+- Webhook observability is stored in `payment_webhook_events` (includes trigger source, stage, status, reason, payload snapshot).
 - Receipt email is collected from each user before creating payment links and reused for future payments.
 - Long-running AI work runs through Cloudflare Queue consumer.
 - Existing Python bot code remains untouched for rollback.

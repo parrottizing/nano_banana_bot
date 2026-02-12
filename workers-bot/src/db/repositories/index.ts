@@ -4,3 +4,4 @@ export * from "./conversations";
 export * from "./payments";
 export * from "./jobs";
 export * from "./mediaGroups";
+export * from "./paymentWebhookEvents";
