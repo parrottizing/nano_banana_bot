@@ -29,14 +29,14 @@ describe("YooKassa payload", () => {
       ok: true,
       json: async () => ({
         id: "payment-id",
-        confirmation: { confirmation_url: "https://pay.example/1" },
+        confirmation: { confirmation_url: "https://pay.example/100" },
       }),
     });
 
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
     const service = new YooKassaService(makeEnv() as any);
-    await service.createSbpPayment("1", 1337, "buyer@example.com");
+    await service.createSbpPayment("100", 1337, "buyer@example.com");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
