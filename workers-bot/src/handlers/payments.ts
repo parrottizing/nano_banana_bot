@@ -360,7 +360,7 @@ async function processSucceededPayment(
   try {
     await telegram.sendMessage(
       context.telegramUserId,
-      `✅ Баланс пополнен на ${context.balanceAdded}. Текущий баланс: ${newBalance}.`,
+      `✅ Баланс пополнен на ${context.balanceAdded} токенов. Текущий баланс: ${newBalance}.`,
     );
   } catch (error) {
     console.error("Failed to notify user about successful payment", {
