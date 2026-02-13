@@ -36,9 +36,12 @@ import {
   stripCtrMarkdownForPlainText,
 } from "../handlers/analyzeCtr";
 import { buildImprovementPrompt } from "../handlers/improveCtr";
-import { CTR_ENHANCEMENT_PROMPT } from "../handlers/createPhoto";
 import { handleYooKassaWebhook } from "../handlers/payments";
 import { TOKEN_COSTS } from "../types/domain";
+import {
+  applyAntiWatermarkGuard,
+  buildCreatePhotoPrompt,
+} from "./promptBuilder";
 
 const PHOTO_LOADING_EMOJIS = ["🤔", "💡", "🎨"] as const;
 const CTR_LOADING_EMOJIS = ["🔍", "✍️", "📝"] as const;
@@ -274,10 +277,7 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
       }
     }
 
-    let prompt = payload.prompt;
-    if (wantsCtr) {
-      prompt += CTR_ENHANCEMENT_PROMPT;
-    }
+    const prompt = buildCreatePhotoPrompt(payload.prompt, wantsCtr);
 
     const targetCount = await getUserImageCount(env.DB, payload.telegramUserId);
     const outputs = await generateImagesInParallel(laozhang, prompt, inputImages, targetCount);
@@ -416,7 +416,7 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
     });
 
     const [imageBase64] = await fileIdsToBase64(telegram, laozhang, [payload.sourceFileId]);
-    const prompt = buildImprovementPrompt(payload.recommendations);
+    const prompt = applyAntiWatermarkGuard(buildImprovementPrompt(payload.recommendations));
 
     const image = await laozhang.generateImage({
       prompt,
