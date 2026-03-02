@@ -13,7 +13,9 @@ import {
   handleCreatePhotoImage,
   handleCreatePhotoText,
   handleSetImageCount,
+  handleSetImageModel,
   showChangeImageCountMenu,
+  showChangeImageModelMenu,
 } from "../handlers/createPhoto";
 import {
   analyzeCtrEntry,
@@ -143,6 +145,9 @@ export async function routeUpdate(env: Env, update: TelegramUpdate): Promise<voi
         case "change_image_count":
           await showChangeImageCountMenu(env, telegram, userId, chatId);
           return;
+        case "change_image_model":
+          await showChangeImageModelMenu(env, telegram, userId, chatId);
+          return;
         case "set_image_count_1":
           await handleSetImageCount(env, telegram, userId, chatId, 1);
           return;
@@ -151,6 +156,12 @@ export async function routeUpdate(env: Env, update: TelegramUpdate): Promise<voi
           return;
         case "set_image_count_4":
           await handleSetImageCount(env, telegram, userId, chatId, 4);
+          return;
+        case "set_image_model_nano_pro":
+          await handleSetImageModel(env, telegram, userId, chatId, "nano_pro");
+          return;
+        case "set_image_model_nano_flash":
+          await handleSetImageModel(env, telegram, userId, chatId, "nano_flash");
           return;
         case "balance":
           await showBalance(env, telegram, userId, chatId);

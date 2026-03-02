@@ -2,6 +2,7 @@ import {
   clearUserState,
   getMediaGroup,
   getUserImageCount,
+  getUserImageModel,
   logConversation,
   markJobDone,
   markJobFailed,
@@ -37,7 +38,7 @@ import {
 } from "../handlers/analyzeCtr";
 import { buildImprovementPrompt } from "../handlers/improveCtr";
 import { handleYooKassaWebhook } from "../handlers/payments";
-import { TOKEN_COSTS } from "../types/domain";
+import { getImageModelId, getImageModelOption, TOKEN_COSTS } from "../types/domain";
 import {
   applyAntiWatermarkGuard,
   buildCreatePhotoPrompt,
@@ -231,6 +232,7 @@ async function generateImagesInParallel(
   prompt: string,
   inputImages: string[],
   targetCount: number,
+  modelId: string,
 ): Promise<string[]> {
   const tasks = Array.from({ length: targetCount }, (_, index) =>
     laozhang
@@ -239,6 +241,7 @@ async function generateImagesInParallel(
         imageBase64: inputImages.length ? inputImages : undefined,
         aspectRatio: "3:4",
         imageSize: "2K",
+        model: modelId,
       })
       .then((image) => ({ index, image }))
       .catch((error) => {
@@ -280,7 +283,10 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
     const prompt = buildCreatePhotoPrompt(payload.prompt, wantsCtr);
 
     const targetCount = await getUserImageCount(env.DB, payload.telegramUserId);
-    const outputs = await generateImagesInParallel(laozhang, prompt, inputImages, targetCount);
+    const imageModelKey = await getUserImageModel(env.DB, payload.telegramUserId);
+    const imageModelId = getImageModelId(imageModelKey);
+    const imageModelOption = getImageModelOption(imageModelKey);
+    const outputs = await generateImagesInParallel(laozhang, prompt, inputImages, targetCount, imageModelId);
 
     if (stopLoadingAnimation) {
       await stopLoadingAnimation();
@@ -298,6 +304,10 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
         messageType: "error",
         content: "no generated images",
         success: false,
+        metadata: {
+          imageModel: imageModelOption.title,
+          imageModelId,
+        },
       });
       return;
     }
@@ -321,6 +331,10 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
       imageCount: outputs.length,
       tokensUsed: actualCost,
       success: true,
+      metadata: {
+        imageModel: imageModelOption.title,
+        imageModelId,
+      },
     });
   } finally {
     if (stopLoadingAnimation) {
@@ -417,12 +431,16 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
 
     const [imageBase64] = await fileIdsToBase64(telegram, laozhang, [payload.sourceFileId]);
     const prompt = applyAntiWatermarkGuard(buildImprovementPrompt(payload.recommendations));
+    const imageModelKey = await getUserImageModel(env.DB, payload.telegramUserId);
+    const imageModelId = getImageModelId(imageModelKey);
+    const imageModelOption = getImageModelOption(imageModelKey);
 
     const image = await laozhang.generateImage({
       prompt,
       imageBase64: [imageBase64],
       aspectRatio: "3:4",
       imageSize: "2K",
+      model: imageModelId,
     });
 
     if (stopLoadingAnimation) {
@@ -442,6 +460,10 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
         messageType: "error",
         content: "image generation failed",
         success: false,
+        metadata: {
+          imageModel: imageModelOption.title,
+          imageModelId,
+        },
       });
       return;
     }
@@ -458,6 +480,10 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
       imageCount: 1,
       tokensUsed: TOKEN_COSTS.create_photo,
       success: true,
+      metadata: {
+        imageModel: imageModelOption.title,
+        imageModelId,
+      },
     });
   } finally {
     if (stopLoadingAnimation) {

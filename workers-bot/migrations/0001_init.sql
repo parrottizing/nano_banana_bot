@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   first_name TEXT,
   balance INTEGER NOT NULL DEFAULT 50,
   image_count INTEGER NOT NULL DEFAULT 1,
+  image_model TEXT NOT NULL DEFAULT 'nano_flash',
   has_seen_image_count_prompt INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_active TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -1,4 +1,9 @@
-import { DEFAULT_BALANCE } from "../../types/domain";
+import {
+  DEFAULT_BALANCE,
+  DEFAULT_IMAGE_MODEL_KEY,
+  type ImageModelKey,
+  parseImageModelKey,
+} from "../../types/domain";
 
 export interface UserRow {
   telegram_user_id: number;
@@ -6,6 +11,7 @@ export interface UserRow {
   first_name: string | null;
   balance: number;
   image_count: number;
+  image_model: string;
   has_seen_image_count_prompt: number;
   receipt_email: string | null;
   created_at: string;
@@ -28,14 +34,14 @@ export async function getOrCreateUser(
 ): Promise<UserRow> {
   await db
     .prepare(
-      `INSERT INTO users (telegram_user_id, username, first_name, balance)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO users (telegram_user_id, username, first_name, balance, image_model)
+       VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(telegram_user_id) DO UPDATE SET
          username = COALESCE(excluded.username, users.username),
          first_name = COALESCE(excluded.first_name, users.first_name),
          last_active = CURRENT_TIMESTAMP`,
     )
-    .bind(telegramUserId, username ?? null, firstName ?? null, DEFAULT_BALANCE)
+    .bind(telegramUserId, username ?? null, firstName ?? null, DEFAULT_BALANCE, DEFAULT_IMAGE_MODEL_KEY)
     .run();
 
   const user = await getUser(db, telegramUserId);
@@ -89,6 +95,24 @@ export async function getUserImageCount(db: D1Database, telegramUserId: number):
     return count;
   }
   return 1;
+}
+
+export async function setUserImageModel(db: D1Database, telegramUserId: number, model: ImageModelKey): Promise<void> {
+  await db
+    .prepare("UPDATE users SET image_model = ?, last_active = CURRENT_TIMESTAMP WHERE telegram_user_id = ?")
+    .bind(model, telegramUserId)
+    .run();
+}
+
+export async function getUserImageModel(db: D1Database, telegramUserId: number): Promise<ImageModelKey> {
+  const row = await db
+    .prepare("SELECT image_model FROM users WHERE telegram_user_id = ?")
+    .bind(telegramUserId)
+    .first<{ image_model: string | null }>();
+  if (!row) {
+    return DEFAULT_IMAGE_MODEL_KEY;
+  }
+  return parseImageModelKey(row.image_model);
 }
 
 export async function shouldShowImageCountPrompt(db: D1Database, telegramUserId: number): Promise<boolean> {

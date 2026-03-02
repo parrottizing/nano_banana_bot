@@ -4,15 +4,24 @@ import {
   getOrCreateUser,
   getUser,
   getUserImageCount,
+  getUserImageModel,
   getUserState,
   logConversation,
   markImageCountPromptSeen,
   setUserImageCount,
+  setUserImageModel,
   setUserState,
   shouldShowImageCountPrompt,
   upsertMediaGroup,
 } from "../db/repositories";
-import { MAX_IMAGE_SIZE_BYTES, MAX_IMAGES, TOKEN_COSTS } from "../types/domain";
+import {
+  getImageModelOption,
+  IMAGE_MODEL_OPTIONS,
+  MAX_IMAGE_SIZE_BYTES,
+  MAX_IMAGES,
+  TOKEN_COSTS,
+  type ImageModelKey,
+} from "../types/domain";
 import type { Env } from "../types/env";
 import { TelegramClient } from "../telegram/client";
 import type { TelegramMessage } from "../types/telegram";
@@ -23,6 +32,10 @@ const FLUSH_MEDIA_GROUP_DELAY_SECONDS = 3;
 
 function imageCountWord(count: number): string {
   return count === 1 ? "изображение" : "изображения";
+}
+
+function modelCallbackData(model: ImageModelKey): string {
+  return `set_image_model_${model}`;
 }
 
 export async function createPhotoEntry(env: Env, telegram: TelegramClient, userId: number, chatId: number): Promise<void> {
@@ -55,6 +68,8 @@ export async function createPhotoEntry(env: Env, telegram: TelegramClient, userI
   await setUserState(env.DB, userId, "create_photo", "awaiting_photo_input", { images: [] });
   const user = await getUser(env.DB, userId);
   const imageCount = await getUserImageCount(env.DB, userId);
+  const imageModel = await getUserImageModel(env.DB, userId);
+  const imageModelOption = getImageModelOption(imageModel);
   const cost = TOKEN_COSTS.create_photo * imageCount;
 
   await logConversation(env.DB, {
@@ -69,12 +84,16 @@ export async function createPhotoEntry(env: Env, telegram: TelegramClient, userI
     "🎨 *Создание фото*\n\n" +
       "Отправьте описание изображения, которое хотите создать или отредактировать.\n\n" +
       `📸 _Количество изображений за один запрос: ${imageCount}_\n` +
+      `🧠 _Модель: ${imageModelOption.title}_\n` +
       `💰 _Стоимость: ${cost} токенов_\n` +
       `🎫 _Ваш баланс: ${user?.balance ?? 0} токенов_`,
     {
       parse_mode: "Markdown",
       reply_markup: {
-        inline_keyboard: [[{ text: "⚙️ Изменить кол-во изображений за раз", callback_data: "change_image_count" }]],
+        inline_keyboard: [
+          [{ text: "⚙️ Изменить кол-во изображений за раз", callback_data: "change_image_count" }],
+          [{ text: "⚙️ Выбрать модель для генерации", callback_data: "change_image_model" }],
+        ],
       },
     },
   );
@@ -120,6 +139,52 @@ export async function showChangeImageCountMenu(
             { text: label(2, "2️⃣"), callback_data: "set_image_count_2" },
             { text: label(4, "4️⃣ ⭐"), callback_data: "set_image_count_4" },
           ],
+          [{ text: "🔙 Назад", callback_data: "create_photo" }],
+        ],
+      },
+    },
+  );
+}
+
+export async function handleSetImageModel(
+  env: Env,
+  telegram: TelegramClient,
+  userId: number,
+  chatId: number,
+  model: ImageModelKey,
+): Promise<void> {
+  await setUserImageModel(env.DB, userId, model);
+  const option = getImageModelOption(model);
+  await telegram.sendMessage(chatId, `✅ Модель установлена: ${option.title}`);
+  await createPhotoEntry(env, telegram, userId, chatId);
+}
+
+export async function showChangeImageModelMenu(
+  env: Env,
+  telegram: TelegramClient,
+  userId: number,
+  chatId: number,
+): Promise<void> {
+  const current = await getUserImageModel(env.DB, userId);
+  const currentOption = getImageModelOption(current);
+
+  const optionOrder: ImageModelKey[] = ["nano_flash", "nano_pro"];
+  const options = optionOrder.map((key) => IMAGE_MODEL_OPTIONS[key]).map((option) => {
+    const suffix = option.key === current ? " ✓" : "";
+    return [{ text: `${option.buttonLabel}${suffix}`, callback_data: modelCallbackData(option.key) }];
+  });
+
+  await telegram.sendMessage(
+    chatId,
+    "🧠 *Модель генерации*\n\n" +
+      "Выберите модель для создания изображений.\n\n" +
+      `Сейчас: *${currentOption.title}*\n` +
+      `_${currentOption.description}_`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          ...options,
           [{ text: "🔙 Назад", callback_data: "create_photo" }],
         ],
       },

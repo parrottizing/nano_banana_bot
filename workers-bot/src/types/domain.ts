@@ -24,9 +24,49 @@ export const PAYMENT_PACKAGE_ORDER = ["100", "300", "1000", "3000", "5000"];
 export const MAX_IMAGES = 6;
 export const MAX_IMAGE_SIZE_BYTES = 7 * 1024 * 1024;
 
-export const IMAGE_MODEL = "gemini-3-pro-image-preview";
+export type ImageModelKey = "nano_pro" | "nano_flash";
+
+export interface ImageModelOption {
+  key: ImageModelKey;
+  modelId: string;
+  title: string;
+  description: string;
+  buttonLabel: string;
+}
+
+export const IMAGE_MODEL_OPTIONS: Record<ImageModelKey, ImageModelOption> = {
+  nano_pro: {
+    key: "nano_pro",
+    modelId: "gemini-3-pro-image-preview",
+    title: "Nano Banana Pro",
+    description: "Максимальное качество",
+    buttonLabel: "🎯 Точнее в мелочах — Nano Banana Pro",
+  },
+  nano_flash: {
+    key: "nano_flash",
+    modelId: "gemini-3.1-flash-image-preview",
+    title: "Nano Banana 2",
+    description: "Быстрее генерация",
+    buttonLabel: "⚡ Быстрее — Nano Banana 2",
+  },
+};
+
+export const DEFAULT_IMAGE_MODEL_KEY: ImageModelKey = "nano_flash";
+export const IMAGE_MODEL = IMAGE_MODEL_OPTIONS[DEFAULT_IMAGE_MODEL_KEY].modelId;
 export const TEXT_MODEL = "gemini-3-flash-preview";
 export const CLASSIFIER_MODEL = "gemini-3-flash-preview";
+
+export function parseImageModelKey(raw: string | null | undefined): ImageModelKey {
+  return raw === "nano_flash" ? raw : DEFAULT_IMAGE_MODEL_KEY;
+}
+
+export function getImageModelOption(key: ImageModelKey): ImageModelOption {
+  return IMAGE_MODEL_OPTIONS[key];
+}
+
+export function getImageModelId(key: ImageModelKey): string {
+  return IMAGE_MODEL_OPTIONS[key].modelId;
+}
 
 export const JOB_TYPES: JobType[] = [
   "CREATE_PHOTO_JOB",

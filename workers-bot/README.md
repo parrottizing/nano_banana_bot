@@ -17,6 +17,7 @@ Cloudflare Workers + D1 implementation of the Nano Banana Telegram bot.
    - `wrangler d1 execute nano-banana-bot --file=./migrations/0001_init.sql`
    - `wrangler d1 execute nano-banana-bot --file=./migrations/0002_user_receipt_email.sql`
    - `wrangler d1 execute nano-banana-bot --file=./migrations/0003_payment_webhook_events.sql`
+   - `wrangler d1 execute nano-banana-bot --file=./migrations/0004_user_image_model.sql`
 4. Set secrets:
    - `wrangler secret put TELEGRAM_BOT_TOKEN`
    - `wrangler secret put TELEGRAM_WEBHOOK_SECRET`
