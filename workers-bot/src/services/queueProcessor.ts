@@ -221,7 +221,7 @@ async function sendGeneratedImages(
     chatId,
     imagesBase64.map((img, i) => ({
       type: "document",
-      media: `data:application/octet-stream;base64,${img}`,
+      media: `data:image/png;base64,${img}`,
       caption: i === 0 ? "📥 Изображение в оригинальном качестве" : undefined,
     })),
   );

@@ -20,6 +20,20 @@ function base64ToBlob(base64: string, type: string): Blob {
   return new Blob([bytes], { type });
 }
 
+function mimeTypeFromFilename(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+  if (lower.endsWith(".webp")) {
+    return "image/webp";
+  }
+  return "application/octet-stream";
+}
+
 interface TelegramApiResponse<T> {
   ok: boolean;
   result: T;
@@ -175,7 +189,7 @@ export class TelegramClient {
   async sendDocument(chatId: number, documentBase64: string, filename: string, caption?: string): Promise<void> {
     const formData = new FormData();
     formData.append("chat_id", String(chatId));
-    formData.append("document", base64ToBlob(documentBase64, "application/octet-stream"), filename);
+    formData.append("document", base64ToBlob(documentBase64, mimeTypeFromFilename(filename)), filename);
     if (caption) {
       formData.append("caption", caption);
     }
