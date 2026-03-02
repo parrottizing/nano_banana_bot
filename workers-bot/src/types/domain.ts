@@ -57,7 +57,10 @@ export const TEXT_MODEL = "gemini-3-flash-preview";
 export const CLASSIFIER_MODEL = "gemini-3-flash-preview";
 
 export function parseImageModelKey(raw: string | null | undefined): ImageModelKey {
-  return raw === "nano_flash" ? raw : DEFAULT_IMAGE_MODEL_KEY;
+  if (raw === "nano_pro" || raw === "nano_flash") {
+    return raw;
+  }
+  return DEFAULT_IMAGE_MODEL_KEY;
 }
 
 export function getImageModelOption(key: ImageModelKey): ImageModelOption {
