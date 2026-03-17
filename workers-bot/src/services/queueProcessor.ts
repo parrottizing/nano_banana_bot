@@ -38,7 +38,12 @@ import {
 } from "../handlers/analyzeCtr";
 import { buildImprovementPrompt } from "../handlers/improveCtr";
 import { handleYooKassaWebhook } from "../handlers/payments";
-import { getImageModelId, getImageModelOption, TOKEN_COSTS } from "../types/domain";
+import {
+  getImageModelId,
+  getImageModelOption,
+  resolveImageModelKeyForRequest,
+  TOKEN_COSTS,
+} from "../types/domain";
 import {
   applyAntiWatermarkGuard,
   buildCreatePhotoPrompt,
@@ -257,6 +262,13 @@ async function generateImagesInParallel(
     .filter((image): image is string => Boolean(image));
 }
 
+function buildReferenceImageFallbackNotice(selectedTitle: string, effectiveTitle: string): string {
+  return (
+    `ℹ️ ${selectedTitle} сейчас работает только для генерации по текстовому описанию.\n` +
+    `Для работы с загруженными изображениями использую ${effectiveTitle}.`
+  );
+}
+
 async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Promise<void> {
   const telegram = new TelegramClient(env);
   const laozhang = new LaoZhangService(env);
@@ -283,9 +295,19 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
     const prompt = buildCreatePhotoPrompt(payload.prompt, wantsCtr);
 
     const targetCount = await getUserImageCount(env.DB, payload.telegramUserId);
-    const imageModelKey = await getUserImageModel(env.DB, payload.telegramUserId);
+    const requestedImageModelKey = await getUserImageModel(env.DB, payload.telegramUserId);
+    const requestedImageModelOption = getImageModelOption(requestedImageModelKey);
+    const imageModelKey = resolveImageModelKeyForRequest(requestedImageModelKey, {
+      requiresReferenceImages: inputImages.length > 0,
+    });
     const imageModelId = getImageModelId(imageModelKey);
     const imageModelOption = getImageModelOption(imageModelKey);
+    if (imageModelKey !== requestedImageModelKey) {
+      await telegram.sendMessage(
+        payload.chatId,
+        buildReferenceImageFallbackNotice(requestedImageModelOption.title, imageModelOption.title),
+      );
+    }
     const outputs = await generateImagesInParallel(laozhang, prompt, inputImages, targetCount, imageModelId);
 
     if (stopLoadingAnimation) {
@@ -305,6 +327,8 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
         content: "no generated images",
         success: false,
         metadata: {
+          requestedImageModel: requestedImageModelOption.title,
+          requestedImageModelId: requestedImageModelOption.modelId,
           imageModel: imageModelOption.title,
           imageModelId,
         },
@@ -332,6 +356,8 @@ async function processCreatePhoto(env: Env, payload: CreatePhotoJobPayload): Pro
       tokensUsed: actualCost,
       success: true,
       metadata: {
+        requestedImageModel: requestedImageModelOption.title,
+        requestedImageModelId: requestedImageModelOption.modelId,
         imageModel: imageModelOption.title,
         imageModelId,
       },
@@ -431,9 +457,19 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
 
     const [imageBase64] = await fileIdsToBase64(telegram, laozhang, [payload.sourceFileId]);
     const prompt = applyAntiWatermarkGuard(buildImprovementPrompt(payload.recommendations));
-    const imageModelKey = await getUserImageModel(env.DB, payload.telegramUserId);
+    const requestedImageModelKey = await getUserImageModel(env.DB, payload.telegramUserId);
+    const requestedImageModelOption = getImageModelOption(requestedImageModelKey);
+    const imageModelKey = resolveImageModelKeyForRequest(requestedImageModelKey, {
+      requiresReferenceImages: true,
+    });
     const imageModelId = getImageModelId(imageModelKey);
     const imageModelOption = getImageModelOption(imageModelKey);
+    if (imageModelKey !== requestedImageModelKey) {
+      await telegram.sendMessage(
+        payload.chatId,
+        buildReferenceImageFallbackNotice(requestedImageModelOption.title, imageModelOption.title),
+      );
+    }
 
     const image = await laozhang.generateImage({
       prompt,
@@ -461,6 +497,8 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
         content: "image generation failed",
         success: false,
         metadata: {
+          requestedImageModel: requestedImageModelOption.title,
+          requestedImageModelId: requestedImageModelOption.modelId,
           imageModel: imageModelOption.title,
           imageModelId,
         },
@@ -481,6 +519,8 @@ async function processImproveCtr(env: Env, payload: ImproveCtrJobPayload): Promi
       tokensUsed: TOKEN_COSTS.create_photo,
       success: true,
       metadata: {
+        requestedImageModel: requestedImageModelOption.title,
+        requestedImageModelId: requestedImageModelOption.modelId,
         imageModel: imageModelOption.title,
         imageModelId,
       },

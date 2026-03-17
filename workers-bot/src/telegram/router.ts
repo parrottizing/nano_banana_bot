@@ -163,6 +163,9 @@ export async function routeUpdate(env: Env, update: TelegramUpdate): Promise<voi
         case "set_image_model_nano_flash":
           await handleSetImageModel(env, telegram, userId, chatId, "nano_flash");
           return;
+        case "set_image_model_chatgpt_image_1_5":
+          await handleSetImageModel(env, telegram, userId, chatId, "chatgpt_image_1_5");
+          return;
         case "balance":
           await showBalance(env, telegram, userId, chatId);
           return;

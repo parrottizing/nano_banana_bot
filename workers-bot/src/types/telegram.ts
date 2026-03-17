@@ -50,6 +50,7 @@ export type TelegramCallbackData =
   | "set_image_count_4"
   | "set_image_model_nano_pro"
   | "set_image_model_nano_flash"
+  | "set_image_model_chatgpt_image_1_5"
   | "balance"
   | "buy_tokens"
   | "support"

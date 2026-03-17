@@ -168,7 +168,7 @@ export async function showChangeImageModelMenu(
   const current = await getUserImageModel(env.DB, userId);
   const currentOption = getImageModelOption(current);
 
-  const optionOrder: ImageModelKey[] = ["nano_flash", "nano_pro"];
+  const optionOrder: ImageModelKey[] = ["nano_flash", "nano_pro", "chatgpt_image_1_5"];
   const options = optionOrder.map((key) => IMAGE_MODEL_OPTIONS[key]).map((option) => {
     const suffix = option.key === current ? " ✓" : "";
     return [{ text: `${option.buttonLabel}${suffix}`, callback_data: modelCallbackData(option.key) }];

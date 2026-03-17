@@ -24,7 +24,8 @@ export const PAYMENT_PACKAGE_ORDER = ["100", "300", "1000", "3000", "5000"];
 export const MAX_IMAGES = 6;
 export const MAX_IMAGE_SIZE_BYTES = 7 * 1024 * 1024;
 
-export type ImageModelKey = "nano_pro" | "nano_flash";
+export type ImageModelKey = "nano_pro" | "nano_flash" | "chatgpt_image_1_5";
+export type ImageModelApiFamily = "gemini_generate_content" | "openai_images";
 
 export interface ImageModelOption {
   key: ImageModelKey;
@@ -32,6 +33,8 @@ export interface ImageModelOption {
   title: string;
   description: string;
   buttonLabel: string;
+  apiFamily: ImageModelApiFamily;
+  supportsReferenceImages: boolean;
 }
 
 export const IMAGE_MODEL_OPTIONS: Record<ImageModelKey, ImageModelOption> = {
@@ -41,6 +44,8 @@ export const IMAGE_MODEL_OPTIONS: Record<ImageModelKey, ImageModelOption> = {
     title: "Nano Banana Pro",
     description: "Максимальное качество",
     buttonLabel: "🎯 Точнее в мелочах — Nano Banana Pro",
+    apiFamily: "gemini_generate_content",
+    supportsReferenceImages: true,
   },
   nano_flash: {
     key: "nano_flash",
@@ -48,6 +53,17 @@ export const IMAGE_MODEL_OPTIONS: Record<ImageModelKey, ImageModelOption> = {
     title: "Nano Banana 2",
     description: "Быстрее генерация",
     buttonLabel: "⚡ Быстрее — Nano Banana 2",
+    apiFamily: "gemini_generate_content",
+    supportsReferenceImages: true,
+  },
+  chatgpt_image_1_5: {
+    key: "chatgpt_image_1_5",
+    modelId: "gpt-image-1.5",
+    title: "ChatGPT-image-1.5",
+    description: "Текст и редактирование по референсам через OpenAI-compatible API",
+    buttonLabel: "🖼️ ChatGPT-image-1.5",
+    apiFamily: "openai_images",
+    supportsReferenceImages: true,
   },
 };
 
@@ -57,7 +73,7 @@ export const TEXT_MODEL = "gemini-3-flash-preview";
 export const CLASSIFIER_MODEL = "gemini-3-flash-preview";
 
 export function parseImageModelKey(raw: string | null | undefined): ImageModelKey {
-  if (raw === "nano_pro" || raw === "nano_flash") {
+  if (raw === "nano_pro" || raw === "nano_flash" || raw === "chatgpt_image_1_5") {
     return raw;
   }
   return DEFAULT_IMAGE_MODEL_KEY;
@@ -69,6 +85,16 @@ export function getImageModelOption(key: ImageModelKey): ImageModelOption {
 
 export function getImageModelId(key: ImageModelKey): string {
   return IMAGE_MODEL_OPTIONS[key].modelId;
+}
+
+export function resolveImageModelKeyForRequest(
+  key: ImageModelKey,
+  options?: { requiresReferenceImages?: boolean },
+): ImageModelKey {
+  if (options?.requiresReferenceImages && !IMAGE_MODEL_OPTIONS[key].supportsReferenceImages) {
+    return DEFAULT_IMAGE_MODEL_KEY;
+  }
+  return key;
 }
 
 export const JOB_TYPES: JobType[] = [
